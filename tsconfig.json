@@ -1,0 +1,51 @@
+{
+  "compilerOptions": {
+    /* 基础配置 */
+    "target": "ES2022",                          // 编译目标：ES2022，VS Code支持现代JavaScript
+    "module": "commonjs",                        // 模块系统：Node.js使用CommonJS
+    "lib": ["ES2022"],                           // 包含的库类型定义
+
+    /* 输出配置 */
+    "outDir": "./out",                           // 编译输出目录
+    "rootDir": "./src",                          // 源代码根目录
+    "sourceMap": true,                           // 生成sourcemap用于调试
+
+    /* 严格类型检查 - 这些选项帮助捕获潜在错误 */
+    "strict": true,                              // 启用所有严格类型检查
+    "noImplicitAny": true,                       // 不允许隐式any类型
+    "strictNullChecks": true,                    // 严格的null检查
+    "strictFunctionTypes": true,                 // 严格的函数类型检查
+    "strictBindCallApply": true,                 // 严格的bind/call/apply检查
+    "strictPropertyInitialization": true,        // 严格的属性初始化检查
+    "noImplicitThis": true,                      // 不允许隐式this
+    "useUnknownInCatchVariables": true,          // catch变量类型为unknown而非any
+    "alwaysStrict": true,                        // 始终在输出文件中添加"use strict"
+
+    /* 额外的代码质量检查 */
+    "noUnusedLocals": true,                      // 报告未使用的局部变量
+    "noUnusedParameters": true,                  // 报告未使用的参数
+    "noImplicitReturns": true,                   // 函数的所有路径必须有返回值
+    "noFallthroughCasesInSwitch": true,          // switch语句不允许fall-through
+    "noUncheckedIndexedAccess": true,            // 索引访问结果包含undefined
+
+    /* 模块解析 */
+    "moduleResolution": "node",                  // 使用Node.js风格的模块解析
+    "esModuleInterop": true,                     // 允许从CommonJS模块默认导入
+    "resolveJsonModule": true,                   // 允许导入JSON文件
+    "allowSyntheticDefaultImports": true,        // 允许合成默认导入
+
+    /* 其他选项 */
+    "skipLibCheck": true,                        // 跳过.d.ts文件的类型检查（加快编译）
+    "forceConsistentCasingInFileNames": true,    // 强制文件名大小写一致
+    "declaration": true,                         // 生成.d.ts类型声明文件
+    "declarationMap": true                       // 生成声明文件的sourcemap
+  },
+  "include": [
+    "src/**/*"                                   // 包含src目录下所有文件
+  ],
+  "exclude": [
+    "node_modules",                              // 排除node_modules
+    "out",                                       // 排除输出目录
+    ".vscode-test"                               // 排除测试目录
+  ]
+}

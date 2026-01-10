@@ -1,0 +1,29 @@
+# 打包时排除的文件
+# 这个文件告诉vsce哪些文件不需要包含在.vsix包中
+
+# 源代码（只需要编译后的out目录）
+src/**
+**/*.ts
+!out/**/*.d.ts
+
+# 开发配置文件
+.vscode/**
+.vscode-test/**
+tsconfig.json
+.eslintrc.json
+
+# Git相关
+.git/**
+.gitignore
+
+# Node模块（会在安装时自动下载）
+node_modules/**
+
+# 测试文件
+**/test/**
+**/*.test.js
+
+# 其他
+*.map
+.DS_Store
+*.vsix

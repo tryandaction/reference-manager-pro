@@ -1,0 +1,412 @@
+/**
+ * aiFormatter.ts - AI API 封装模块
+ *
+ * 职责：封装Anthropic Claude API调用，提供BibTeX格式化和重复检测功能
+ *
+ * 关键特性：
+ * - 重试机制（指数退避）
+ * - 超时控制
+ * - 详细错误信息
+ * - 批量处理支持
+ */
+
+import Anthropic from '@anthropic-ai/sdk';
+import { ExtensionConfig } from './config';
+
+/**
+ * 重复检测结果接口
+ */
+export interface DuplicateCheckResult {
+    /** 是否为重复条目 */
+    isDuplicate: boolean;
+    /** 建议保留哪个条目 ('entry1' 或 'entry2') */
+    keepEntry: 'entry1' | 'entry2';
+    /** AI给出的理由 */
+    reason: string;
+}
+
+/**
+ * API调用错误类型
+ */
+export enum AIErrorType {
+    /** API Key无效或未配置 */
+    INVALID_API_KEY = 'INVALID_API_KEY',
+    /** 网络连接失败 */
+    NETWORK_ERROR = 'NETWORK_ERROR',
+    /** 请求超时 */
+    TIMEOUT = 'TIMEOUT',
+    /** API返回错误 */
+    API_ERROR = 'API_ERROR',
+    /** 响应解析失败 */
+    PARSE_ERROR = 'PARSE_ERROR',
+    /** 速率限制 */
+    RATE_LIMIT = 'RATE_LIMIT',
+    /** 未知错误 */
+    UNKNOWN = 'UNKNOWN',
+}
+
+/**
+ * 自定义AI错误类
+ * 提供更详细的错误信息，便于用户排查问题
+ */
+export class AIError extends Error {
+    constructor(
+        public readonly type: AIErrorType,
+        message: string,
+        public readonly suggestion: string,
+        public readonly originalError?: unknown
+    ) {
+        super(message);
+        this.name = 'AIError';
+    }
+
+    /**
+     * 获取用户友好的错误信息
+     */
+    getUserMessage(): string {
+        return `${this.message}\n💡 建议: ${this.suggestion}`;
+    }
+}
+
+/**
+ * 格式化BibTeX条目的Prompt模板
+ */
+const FORMAT_PROMPT = `规范化以下BibTeX条目，要求：
+1. 期刊名使用标准缩写（如Physical Review Letters → Phys. Rev. Lett.，Nature Communications → Nat. Commun.）
+2. 如果能根据标题和作者推断DOI，请补全（格式：10.xxxx/xxxxx）
+3. 作者格式统一为"Last, First and Last, First"格式
+4. 删除多余空格和换行，保持格式整洁
+5. 年份使用4位数字格式
+6. 页码使用连字符（如123--456）
+
+原始条目：
+{ENTRY}
+
+只输出规范化后的BibTeX条目，不要任何解释或额外文字。`;
+
+/**
+ * 检测重复条目的Prompt模板
+ */
+const DUPLICATE_CHECK_PROMPT = `判断以下两个BibTeX条目是否指向同一篇文献（可能是arXiv预印本和正式发表版本，或格式不同的同一文献）。
+
+条目1:
+{ENTRY1}
+
+条目2:
+{ENTRY2}
+
+请分析并返回JSON格式结果（只返回JSON，不要其他文字）：
+{
+  "is_duplicate": true或false,
+  "keep": "entry1"或"entry2"（如果是重复，推荐保留更权威的版本，优先正式发表版）,
+  "reason": "简短说明判断理由"
+}`;
+
+/**
+ * AI格式化器类
+ * 封装所有与Claude API的交互
+ */
+export class AIFormatter {
+    private client: Anthropic;
+    private config: ExtensionConfig;
+
+    /**
+     * 创建AIFormatter实例
+     *
+     * @param config 插件配置
+     * @throws AIError 如果API Key无效
+     */
+    constructor(config: ExtensionConfig) {
+        this.config = config;
+
+        // 创建Anthropic客户端
+        this.client = new Anthropic({
+            apiKey: config.apiKey,
+        });
+    }
+
+    /**
+     * 更新配置（当用户修改设置时调用）
+     *
+     * @param config 新的配置
+     */
+    updateConfig(config: ExtensionConfig): void {
+        this.config = config;
+        this.client = new Anthropic({
+            apiKey: config.apiKey,
+        });
+    }
+
+    /**
+     * 格式化单个BibTeX条目
+     *
+     * @param rawEntry 原始BibTeX条目文本
+     * @returns Promise<string> 格式化后的条目
+     * @throws AIError 如果API调用失败
+     *
+     * @example
+     * const formatted = await formatter.formatBibEntry('@article{key, author={J Smith}...}');
+     */
+    async formatBibEntry(rawEntry: string): Promise<string> {
+        const prompt = FORMAT_PROMPT.replace('{ENTRY}', rawEntry);
+
+        const response = await this.callAPI(prompt);
+
+        // 清理响应（移除可能的markdown代码块标记）
+        return this.cleanBibResponse(response);
+    }
+
+    /**
+     * 批量格式化多个BibTeX条目
+     *
+     * @param entries 原始条目数组
+     * @param onProgress 进度回调
+     * @returns Promise<string[]> 格式化后的条目数组
+     */
+    async formatBibEntries(
+        entries: string[],
+        onProgress?: (current: number, total: number) => void
+    ): Promise<string[]> {
+        const results: string[] = [];
+
+        for (let i = 0; i < entries.length; i++) {
+            if (onProgress) {
+                onProgress(i + 1, entries.length);
+            }
+
+            const entry = entries[i]!;
+            try {
+                const formatted = await this.formatBibEntry(entry);
+                results.push(formatted);
+            } catch (error) {
+                // 单个条目失败时保留原文，继续处理其他条目
+                console.error(`格式化条目 ${i + 1} 失败:`, error);
+                results.push(entry);
+            }
+        }
+
+        return results;
+    }
+
+    /**
+     * 检测两个条目是否为重复
+     *
+     * @param entry1 第一个条目
+     * @param entry2 第二个条目
+     * @returns Promise<DuplicateCheckResult> 检测结果
+     */
+    async checkDuplicate(entry1: string, entry2: string): Promise<DuplicateCheckResult> {
+        const prompt = DUPLICATE_CHECK_PROMPT
+            .replace('{ENTRY1}', entry1)
+            .replace('{ENTRY2}', entry2);
+
+        const response = await this.callAPI(prompt);
+
+        // 解析JSON响应
+        try {
+            // 尝试提取JSON（可能被包裹在代码块中）
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) {
+                throw new Error('响应中未找到JSON');
+            }
+
+            const parsed = JSON.parse(jsonMatch[0]) as {
+                is_duplicate: boolean;
+                keep: string;
+                reason: string;
+            };
+
+            return {
+                isDuplicate: parsed.is_duplicate,
+                keepEntry: parsed.keep === 'entry1' ? 'entry1' : 'entry2',
+                reason: parsed.reason || '未提供理由',
+            };
+        } catch (parseError) {
+            throw new AIError(
+                AIErrorType.PARSE_ERROR,
+                '无法解析AI响应',
+                '请重试，如果问题持续请检查条目格式',
+                parseError
+            );
+        }
+    }
+
+    /**
+     * 核心API调用方法
+     * 实现重试机制和超时控制
+     *
+     * @param prompt 发送给AI的提示
+     * @returns Promise<string> AI的响应文本
+     */
+    private async callAPI(prompt: string): Promise<string> {
+        let lastError: unknown;
+
+        // 重试循环
+        for (let attempt = 1; attempt <= this.config.maxRetries; attempt++) {
+            try {
+                // 创建AbortController用于超时控制
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => {
+                    controller.abort();
+                }, this.config.timeout);
+
+                try {
+                    const response = await this.client.messages.create({
+                        model: this.config.model,
+                        max_tokens: 2048,
+                        messages: [
+                            {
+                                role: 'user',
+                                content: prompt,
+                            },
+                        ],
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    // 提取文本响应
+                    const textContent = response.content.find(c => c.type === 'text');
+                    if (!textContent || textContent.type !== 'text') {
+                        throw new AIError(
+                            AIErrorType.PARSE_ERROR,
+                            'AI响应格式异常',
+                            '请重试',
+                            response
+                        );
+                    }
+
+                    return textContent.text;
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+            } catch (error) {
+                lastError = error;
+
+                // 判断错误类型
+                const aiError = this.classifyError(error);
+
+                // 某些错误不应重试
+                if (
+                    aiError.type === AIErrorType.INVALID_API_KEY ||
+                    aiError.type === AIErrorType.RATE_LIMIT
+                ) {
+                    throw aiError;
+                }
+
+                // 如果还有重试机会，等待后重试（指数退避）
+                if (attempt < this.config.maxRetries) {
+                    const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s...
+                    await this.sleep(delay);
+                }
+            }
+        }
+
+        // 所有重试都失败
+        throw this.classifyError(lastError);
+    }
+
+    /**
+     * 分类错误类型，生成用户友好的错误信息
+     */
+    private classifyError(error: unknown): AIError {
+        // 处理Anthropic SDK错误
+        if (error instanceof Anthropic.APIError) {
+            const status = error.status;
+
+            if (status === 401) {
+                return new AIError(
+                    AIErrorType.INVALID_API_KEY,
+                    'API Key无效或已过期',
+                    '请在设置中检查并更新您的Anthropic API Key',
+                    error
+                );
+            }
+
+            if (status === 429) {
+                return new AIError(
+                    AIErrorType.RATE_LIMIT,
+                    'API请求过于频繁',
+                    '请稍后再试，或升级您的API配额',
+                    error
+                );
+            }
+
+            if (status !== undefined && status >= 500) {
+                return new AIError(
+                    AIErrorType.API_ERROR,
+                    'Anthropic服务暂时不可用',
+                    '请稍后重试',
+                    error
+                );
+            }
+
+            return new AIError(
+                AIErrorType.API_ERROR,
+                `API错误: ${error.message}`,
+                '请检查请求参数或稍后重试',
+                error
+            );
+        }
+
+        // 处理AbortError（超时）
+        if (error instanceof Error && error.name === 'AbortError') {
+            return new AIError(
+                AIErrorType.TIMEOUT,
+                '请求超时',
+                '请检查网络连接，或在设置中增加超时时间',
+                error
+            );
+        }
+
+        // 处理网络错误
+        if (error instanceof Error && error.message.includes('fetch')) {
+            return new AIError(
+                AIErrorType.NETWORK_ERROR,
+                '网络连接失败',
+                '请检查网络连接和代理设置',
+                error
+            );
+        }
+
+        // 如果已经是AIError，直接返回
+        if (error instanceof AIError) {
+            return error;
+        }
+
+        // 未知错误
+        return new AIError(
+            AIErrorType.UNKNOWN,
+            error instanceof Error ? error.message : '发生未知错误',
+            '请查看开发者工具获取详细信息',
+            error
+        );
+    }
+
+    /**
+     * 清理BibTeX响应
+     * 移除可能的markdown代码块标记
+     */
+    private cleanBibResponse(response: string): string {
+        let cleaned = response.trim();
+
+        // 移除markdown代码块标记
+        if (cleaned.startsWith('```bibtex')) {
+            cleaned = cleaned.substring(9);
+        } else if (cleaned.startsWith('```')) {
+            cleaned = cleaned.substring(3);
+        }
+
+        if (cleaned.endsWith('```')) {
+            cleaned = cleaned.substring(0, cleaned.length - 3);
+        }
+
+        return cleaned.trim();
+    }
+
+    /**
+     * 延迟函数
+     */
+    private sleep(ms: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+}

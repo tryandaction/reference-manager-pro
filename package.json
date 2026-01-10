@@ -1,0 +1,150 @@
+{
+  "name": "reference-manager-pro",
+  "displayName": "Reference Manager Pro",
+  "description": "AI-powered LaTeX bibliography management - format BibTeX, detect unused citations, and remove duplicates",
+  "version": "0.1.0",
+  "publisher": "your-publisher-id",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Formatters"
+  ],
+  "keywords": [
+    "latex",
+    "bibtex",
+    "bibliography",
+    "reference",
+    "citation",
+    "ai",
+    "formatting",
+    "academic",
+    "research",
+    "paper",
+    "thesis",
+    "dissertation",
+    "claude",
+    "anthropic"
+  ],
+
+  "activationEvents": [
+    "onLanguage:latex",
+    "onLanguage:bibtex"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "referenceManager.formatEntry",
+        "title": "Format BibTeX Entry",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.findUnusedCitations",
+        "title": "Find Unused Citations",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.removeDuplicates",
+        "title": "Remove Duplicate Entries",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.activateLicense",
+        "title": "Activate License",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.viewLicenseStatus",
+        "title": "View License Status",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.formatEntryLocal",
+        "title": "Format BibTeX Entry (Local)",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.formatAllEntries",
+        "title": "Format All Entries (Pro)",
+        "category": "Reference Manager"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "referenceManager.formatEntry",
+          "when": "editorLangId == bibtex",
+          "group": "1_modification"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Reference Manager Pro",
+      "properties": {
+        "referenceManager.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your Anthropic API key (get from console.anthropic.com)",
+          "scope": "application"
+        },
+        "referenceManager.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum API retry attempts on failure"
+        },
+        "referenceManager.timeout": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 5000,
+          "maximum": 120000,
+          "description": "API request timeout in milliseconds"
+        },
+        "referenceManager.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "Claude model to use for AI operations"
+        },
+        "referenceManager.licenseKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your License Key for Pro features (purchase from Gumroad)",
+          "scope": "application"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "eslint src --ext ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.28",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/vsce": "^2.22.0",
+    "eslint": "^8.54.0",
+    "fast-check": "^4.5.3",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.16"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/reference-manager-pro"
+  },
+  "license": "MIT"
+}
