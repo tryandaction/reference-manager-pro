@@ -30,3 +30,7 @@ Thumbs.db
 secrets/
 *.secret
 *.key
+
+# License 记录（包含用户信息）
+licenses.json
+scripts/licenses.json
