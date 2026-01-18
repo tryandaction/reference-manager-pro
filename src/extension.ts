@@ -52,12 +52,22 @@ function getOutputChannel(): vscode.OutputChannel {
 
 /**
  * 初始化AI格式化器
+ * 根据选择的 AI 提供商检查对应的 API Key
  */
 function initFormatter(): AIFormatter | null {
     const config = getConfig();
-    if (!config.apiKey) {
-        return null;
+    
+    // 根据 aiProvider 检查对应的 API Key
+    if (config.aiProvider === 'groq') {
+        if (!config.groqApiKey) {
+            return null;
+        }
+    } else {
+        if (!config.apiKey) {
+            return null;
+        }
     }
+    
     return new AIFormatter(config);
 }
 
@@ -715,15 +725,24 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // 启动时检查配置 (Req 5.2)
     const config = getConfig();
-    if (!config.apiKey) {
+    const hasValidApiKey = config.aiProvider === 'groq' 
+        ? !!config.groqApiKey 
+        : !!config.apiKey;
+    
+    if (!hasValidApiKey) {
+        const providerName = config.aiProvider === 'groq' ? 'Groq' : 'Anthropic';
+        const settingKey = config.aiProvider === 'groq' 
+            ? 'referenceManager.groqApiKey' 
+            : 'referenceManager.apiKey';
+        
         vscode.window.showInformationMessage(
-            'Reference Manager Pro: 请配置 Anthropic API Key 以启用 AI 功能',
+            `Reference Manager Pro: 请配置 ${providerName} API Key 以启用 AI 功能（本地格式化功能可直接使用）`,
             '打开设置'
         ).then(action => {
             if (action === '打开设置') {
                 vscode.commands.executeCommand(
                     'workbench.action.openSettings',
-                    'referenceManager.apiKey'
+                    settingKey
                 );
             }
         });

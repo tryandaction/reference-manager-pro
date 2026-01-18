@@ -1,9 +1,10 @@
 /**
  * aiFormatter.ts - AI API 封装模块
  *
- * 职责：封装Anthropic Claude API调用，提供BibTeX格式化和重复检测功能
+ * 职责：封装 AI API 调用，支持 Anthropic Claude 和 Groq
  *
  * 关键特性：
+ * - 多提供商支持（Anthropic、Groq）
  * - 重试机制（指数退避）
  * - 超时控制
  * - 详细错误信息
@@ -47,7 +48,6 @@ export enum AIErrorType {
 
 /**
  * 自定义AI错误类
- * 提供更详细的错误信息，便于用户排查问题
  */
 export class AIError extends Error {
     constructor(
@@ -60,9 +60,6 @@ export class AIError extends Error {
         this.name = 'AIError';
     }
 
-    /**
-     * 获取用户友好的错误信息
-     */
     getUserMessage(): string {
         return `${this.message}\n💡 建议: ${this.suggestion}`;
     }
@@ -103,66 +100,48 @@ const DUPLICATE_CHECK_PROMPT = `判断以下两个BibTeX条目是否指向同一
 }`;
 
 /**
+ * Groq API 响应接口
+ */
+interface GroqResponse {
+    choices: Array<{
+        message: {
+            content: string;
+        };
+    }>;
+}
+
+/**
  * AI格式化器类
- * 封装所有与Claude API的交互
+ * 封装所有与 AI API 的交互
  */
 export class AIFormatter {
-    private client: Anthropic;
+    private anthropicClient: Anthropic | null = null;
     private config: ExtensionConfig;
 
-    /**
-     * 创建AIFormatter实例
-     *
-     * @param config 插件配置
-     * @throws AIError 如果API Key无效
-     */
     constructor(config: ExtensionConfig) {
         this.config = config;
-
-        // 创建Anthropic客户端
-        this.client = new Anthropic({
-            apiKey: config.apiKey,
-        });
+        this.initClients();
     }
 
-    /**
-     * 更新配置（当用户修改设置时调用）
-     *
-     * @param config 新的配置
-     */
+    private initClients(): void {
+        if (this.config.aiProvider === 'anthropic' && this.config.apiKey) {
+            this.anthropicClient = new Anthropic({
+                apiKey: this.config.apiKey,
+            });
+        }
+    }
+
     updateConfig(config: ExtensionConfig): void {
         this.config = config;
-        this.client = new Anthropic({
-            apiKey: config.apiKey,
-        });
+        this.initClients();
     }
 
-    /**
-     * 格式化单个BibTeX条目
-     *
-     * @param rawEntry 原始BibTeX条目文本
-     * @returns Promise<string> 格式化后的条目
-     * @throws AIError 如果API调用失败
-     *
-     * @example
-     * const formatted = await formatter.formatBibEntry('@article{key, author={J Smith}...}');
-     */
     async formatBibEntry(rawEntry: string): Promise<string> {
         const prompt = FORMAT_PROMPT.replace('{ENTRY}', rawEntry);
-
         const response = await this.callAPI(prompt);
-
-        // 清理响应（移除可能的markdown代码块标记）
         return this.cleanBibResponse(response);
     }
 
-    /**
-     * 批量格式化多个BibTeX条目
-     *
-     * @param entries 原始条目数组
-     * @param onProgress 进度回调
-     * @returns Promise<string[]> 格式化后的条目数组
-     */
     async formatBibEntries(
         entries: string[],
         onProgress?: (current: number, total: number) => void
@@ -179,7 +158,6 @@ export class AIFormatter {
                 const formatted = await this.formatBibEntry(entry);
                 results.push(formatted);
             } catch (error) {
-                // 单个条目失败时保留原文，继续处理其他条目
                 console.error(`格式化条目 ${i + 1} 失败:`, error);
                 results.push(entry);
             }
@@ -188,13 +166,6 @@ export class AIFormatter {
         return results;
     }
 
-    /**
-     * 检测两个条目是否为重复
-     *
-     * @param entry1 第一个条目
-     * @param entry2 第二个条目
-     * @returns Promise<DuplicateCheckResult> 检测结果
-     */
     async checkDuplicate(entry1: string, entry2: string): Promise<DuplicateCheckResult> {
         const prompt = DUPLICATE_CHECK_PROMPT
             .replace('{ENTRY1}', entry1)
@@ -202,9 +173,7 @@ export class AIFormatter {
 
         const response = await this.callAPI(prompt);
 
-        // 解析JSON响应
         try {
-            // 尝试提取JSON（可能被包裹在代码块中）
             const jsonMatch = response.match(/\{[\s\S]*\}/);
             if (!jsonMatch) {
                 throw new Error('响应中未找到JSON');
@@ -231,27 +200,139 @@ export class AIFormatter {
         }
     }
 
-    /**
-     * 核心API调用方法
-     * 实现重试机制和超时控制
-     *
-     * @param prompt 发送给AI的提示
-     * @returns Promise<string> AI的响应文本
-     */
     private async callAPI(prompt: string): Promise<string> {
+        if (this.config.aiProvider === 'groq') {
+            return this.callGroqAPI(prompt);
+        } else {
+            return this.callAnthropicAPI(prompt);
+        }
+    }
+
+    /**
+     * 调用 Groq API
+     */
+    private async callGroqAPI(prompt: string): Promise<string> {
         let lastError: unknown;
 
-        // 重试循环
         for (let attempt = 1; attempt <= this.config.maxRetries; attempt++) {
             try {
-                // 创建AbortController用于超时控制
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => {
                     controller.abort();
                 }, this.config.timeout);
 
                 try {
-                    const response = await this.client.messages.create({
+                    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.config.groqApiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            model: this.config.groqModel,
+                            messages: [
+                                {
+                                    role: 'user',
+                                    content: prompt,
+                                },
+                            ],
+                            max_tokens: 2048,
+                            temperature: 0.1,
+                        }),
+                        signal: controller.signal,
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        
+                        if (response.status === 401) {
+                            throw new AIError(
+                                AIErrorType.INVALID_API_KEY,
+                                'Groq API Key 无效',
+                                '请检查您的 Groq API Key 是否正确',
+                                errorText
+                            );
+                        }
+                        
+                        if (response.status === 429) {
+                            throw new AIError(
+                                AIErrorType.RATE_LIMIT,
+                                'Groq API 请求过于频繁',
+                                '请稍后再试',
+                                errorText
+                            );
+                        }
+
+                        throw new AIError(
+                            AIErrorType.API_ERROR,
+                            `Groq API 错误: ${response.status}`,
+                            '请稍后重试',
+                            errorText
+                        );
+                    }
+
+                    const data = await response.json() as GroqResponse;
+                    const content = data.choices?.[0]?.message?.content;
+
+                    if (!content) {
+                        throw new AIError(
+                            AIErrorType.PARSE_ERROR,
+                            'Groq 响应格式异常',
+                            '请重试',
+                            data
+                        );
+                    }
+
+                    return content;
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+            } catch (error) {
+                lastError = error;
+
+                if (error instanceof AIError) {
+                    if (error.type === AIErrorType.INVALID_API_KEY || 
+                        error.type === AIErrorType.RATE_LIMIT) {
+                        throw error;
+                    }
+                }
+
+                if (attempt < this.config.maxRetries) {
+                    const delay = Math.pow(2, attempt) * 1000;
+                    await this.sleep(delay);
+                }
+            }
+        }
+
+        throw this.classifyError(lastError);
+    }
+
+    /**
+     * 调用 Anthropic API
+     */
+    private async callAnthropicAPI(prompt: string): Promise<string> {
+        if (!this.anthropicClient) {
+            throw new AIError(
+                AIErrorType.INVALID_API_KEY,
+                'Anthropic 客户端未初始化',
+                '请配置有效的 Anthropic API Key',
+                null
+            );
+        }
+
+        let lastError: unknown;
+
+        for (let attempt = 1; attempt <= this.config.maxRetries; attempt++) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => {
+                    controller.abort();
+                }, this.config.timeout);
+
+                try {
+                    const response = await this.anthropicClient.messages.create({
                         model: this.config.model,
                         max_tokens: 2048,
                         messages: [
@@ -264,7 +345,6 @@ export class AIFormatter {
 
                     clearTimeout(timeoutId);
 
-                    // 提取文本响应
                     const textContent = response.content.find(c => c.type === 'text');
                     if (!textContent || textContent.type !== 'text') {
                         throw new AIError(
@@ -282,34 +362,24 @@ export class AIFormatter {
             } catch (error) {
                 lastError = error;
 
-                // 判断错误类型
                 const aiError = this.classifyError(error);
 
-                // 某些错误不应重试
-                if (
-                    aiError.type === AIErrorType.INVALID_API_KEY ||
-                    aiError.type === AIErrorType.RATE_LIMIT
-                ) {
+                if (aiError.type === AIErrorType.INVALID_API_KEY ||
+                    aiError.type === AIErrorType.RATE_LIMIT) {
                     throw aiError;
                 }
 
-                // 如果还有重试机会，等待后重试（指数退避）
                 if (attempt < this.config.maxRetries) {
-                    const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s...
+                    const delay = Math.pow(2, attempt) * 1000;
                     await this.sleep(delay);
                 }
             }
         }
 
-        // 所有重试都失败
         throw this.classifyError(lastError);
     }
 
-    /**
-     * 分类错误类型，生成用户友好的错误信息
-     */
     private classifyError(error: unknown): AIError {
-        // 处理Anthropic SDK错误
         if (error instanceof Anthropic.APIError) {
             const status = error.status;
 
@@ -317,7 +387,7 @@ export class AIFormatter {
                 return new AIError(
                     AIErrorType.INVALID_API_KEY,
                     'API Key无效或已过期',
-                    '请在设置中检查并更新您的Anthropic API Key',
+                    '请在设置中检查并更新您的API Key',
                     error
                 );
             }
@@ -326,7 +396,7 @@ export class AIFormatter {
                 return new AIError(
                     AIErrorType.RATE_LIMIT,
                     'API请求过于频繁',
-                    '请稍后再试，或升级您的API配额',
+                    '请稍后再试',
                     error
                 );
             }
@@ -334,7 +404,7 @@ export class AIFormatter {
             if (status !== undefined && status >= 500) {
                 return new AIError(
                     AIErrorType.API_ERROR,
-                    'Anthropic服务暂时不可用',
+                    '服务暂时不可用',
                     '请稍后重试',
                     error
                 );
@@ -348,7 +418,6 @@ export class AIFormatter {
             );
         }
 
-        // 处理AbortError（超时）
         if (error instanceof Error && error.name === 'AbortError') {
             return new AIError(
                 AIErrorType.TIMEOUT,
@@ -358,7 +427,6 @@ export class AIFormatter {
             );
         }
 
-        // 处理网络错误
         if (error instanceof Error && error.message.includes('fetch')) {
             return new AIError(
                 AIErrorType.NETWORK_ERROR,
@@ -368,12 +436,10 @@ export class AIFormatter {
             );
         }
 
-        // 如果已经是AIError，直接返回
         if (error instanceof AIError) {
             return error;
         }
 
-        // 未知错误
         return new AIError(
             AIErrorType.UNKNOWN,
             error instanceof Error ? error.message : '发生未知错误',
@@ -382,14 +448,9 @@ export class AIFormatter {
         );
     }
 
-    /**
-     * 清理BibTeX响应
-     * 移除可能的markdown代码块标记
-     */
     private cleanBibResponse(response: string): string {
         let cleaned = response.trim();
 
-        // 移除markdown代码块标记
         if (cleaned.startsWith('```bibtex')) {
             cleaned = cleaned.substring(9);
         } else if (cleaned.startsWith('```')) {
@@ -403,9 +464,6 @@ export class AIFormatter {
         return cleaned.trim();
     }
 
-    /**
-     * 延迟函数
-     */
     private sleep(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
     }

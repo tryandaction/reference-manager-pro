@@ -127,11 +127,21 @@ Even without an Anthropic API Key, you can use these features:
 
 ### Configure API Key (Enable AI Features)
 
-1. Visit [console.anthropic.com](https://console.anthropic.com)
-2. Sign up and get your API Key
+We recommend **Groq** (free and fast):
+
+1. Visit [console.groq.com](https://console.groq.com)
+2. Sign up and get your API Key (free)
 3. Press `Ctrl+,` in VS Code to open Settings
 4. Search for "Reference Manager"
-5. Enter your API Key in the `Api Key` field
+5. Make sure `AI Provider` is set to `groq`
+6. Enter your API Key in the `Groq Api Key` field
+
+Or use Anthropic (paid, new users get $5 free credit):
+
+1. Visit [console.anthropic.com](https://console.anthropic.com)
+2. Sign up and get your API Key
+3. Set `AI Provider` to `anthropic` in settings
+4. Enter your API Key in the `Api Key` field
 
 ### Basic Workflow
 
@@ -225,11 +235,39 @@ Search for "Reference Manager" in VS Code settings to find these options:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
+| `referenceManager.aiProvider` | AI provider (groq/anthropic) | groq |
+| `referenceManager.groqApiKey` | Groq API Key (free) | empty |
+| `referenceManager.groqModel` | Groq model | llama-3.3-70b-versatile |
 | `referenceManager.apiKey` | Anthropic API Key | empty |
+| `referenceManager.model` | Anthropic model | claude-sonnet-4-20250514 |
 | `referenceManager.licenseKey` | Pro license key | empty |
 | `referenceManager.maxRetries` | Max API retry attempts | 3 |
 | `referenceManager.timeout` | API timeout in milliseconds | 30000 |
-| `referenceManager.model` | Claude model to use | claude-sonnet-4-20250514 |
+
+### AI Provider Selection
+
+| Provider | Cost | Speed | Recommended For |
+|----------|------|-------|-----------------|
+| **Groq** | 🆓 Free | ⚡ Very Fast | Recommended! Daily use |
+| **Anthropic** | 💰 Paid | Medium | High quality needs |
+
+#### Configure Groq (Recommended)
+
+1. Visit [console.groq.com](https://console.groq.com)
+2. Sign up (free)
+3. Create an API Key
+4. In VS Code settings:
+   - Set `AI Provider` to `groq`
+   - Enter your key in `Groq Api Key`
+
+#### Configure Anthropic
+
+1. Visit [console.anthropic.com](https://console.anthropic.com)
+2. Sign up (new users get $5 free credit)
+3. Create an API Key
+4. In VS Code settings:
+   - Set `AI Provider` to `anthropic`
+   - Enter your key in `Api Key`
 
 ---
 
@@ -255,18 +293,31 @@ Search for "Reference Manager" in VS Code settings to find these options:
 
 ## FAQ
 
-### Q: Can I use it without an Anthropic API Key?
+### Q: Can I use it without an API Key?
 
-**A:** Yes! Local formatting is completely free and requires no API Key. It can:
-- Fix field name typos
-- Standardize field order
-- Clean up formatting
+**A:** Yes! Local formatting is completely free and requires no API Key.
 
-AI features (smart formatting, unused citation detection, duplicate detection) require an API Key.
+For AI features, we recommend **Groq** (completely free):
+- Visit [console.groq.com](https://console.groq.com) to sign up
+- Get a free API Key
+- Configure it in settings
+
+### Q: What's the difference between Groq and Anthropic?
+
+**A:**
+| | Groq | Anthropic |
+|--|------|-----------|
+| Cost | 🆓 Free | 💰 Paid |
+| Speed | ⚡ Very Fast | Medium |
+| Model | Llama 3.3 70B | Claude |
+
+We recommend Groq - it's free and works great.
 
 ### Q: Does the API Key cost money?
 
-**A:** Anthropic provides free credits that are usually sufficient for personal use. Visit [console.anthropic.com](https://console.anthropic.com) for details.
+**A:** 
+- **Groq**: Completely free!
+- **Anthropic**: Offers free credits, new users get $5
 
 ### Q: When does the daily usage limit reset?
 

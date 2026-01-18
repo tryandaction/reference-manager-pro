@@ -8,18 +8,29 @@
 import * as vscode from 'vscode';
 
 /**
+ * AI 提供商类型
+ */
+export type AIProvider = 'anthropic' | 'groq';
+
+/**
  * 插件配置接口
  * 对应 package.json 中 contributes.configuration 定义的设置项
  */
 export interface ExtensionConfig {
+    /** AI 提供商 */
+    aiProvider: AIProvider;
     /** Anthropic API密钥 */
     apiKey: string;
+    /** Groq API密钥 */
+    groqApiKey: string;
     /** API调用失败时的最大重试次数 */
     maxRetries: number;
     /** API请求超时时间（毫秒） */
     timeout: number;
     /** 使用的Claude模型ID */
     model: string;
+    /** Groq 模型 */
+    groqModel: string;
 }
 
 /**
@@ -29,14 +40,20 @@ export interface ExtensionConfig {
 export const CONFIG_KEYS = {
     /** 配置节名称 */
     SECTION: 'referenceManager',
+    /** AI 提供商 */
+    AI_PROVIDER: 'aiProvider',
     /** API密钥 */
     API_KEY: 'apiKey',
+    /** Groq API密钥 */
+    GROQ_API_KEY: 'groqApiKey',
     /** 最大重试次数 */
     MAX_RETRIES: 'maxRetries',
     /** 超时时间 */
     TIMEOUT: 'timeout',
     /** 模型选择 */
     MODEL: 'model',
+    /** Groq 模型 */
+    GROQ_MODEL: 'groqModel',
 } as const;
 
 /**
@@ -44,10 +61,13 @@ export const CONFIG_KEYS = {
  * 当用户未设置时使用这些默认值
  */
 export const DEFAULT_CONFIG: ExtensionConfig = {
+    aiProvider: 'groq',
     apiKey: '',
+    groqApiKey: '',
     maxRetries: 3,
     timeout: 30000,
     model: 'claude-sonnet-4-20250514',
+    groqModel: 'llama-3.3-70b-versatile',
 };
 
 /**
@@ -66,36 +86,30 @@ export function getConfig(): ExtensionConfig {
     const config = vscode.workspace.getConfiguration(CONFIG_KEYS.SECTION);
 
     return {
-        // 使用 get<T> 方法获取配置值，第二个参数是默认值
+        aiProvider: config.get<AIProvider>(CONFIG_KEYS.AI_PROVIDER, DEFAULT_CONFIG.aiProvider),
         apiKey: config.get<string>(CONFIG_KEYS.API_KEY, DEFAULT_CONFIG.apiKey),
+        groqApiKey: config.get<string>(CONFIG_KEYS.GROQ_API_KEY, DEFAULT_CONFIG.groqApiKey),
         maxRetries: config.get<number>(CONFIG_KEYS.MAX_RETRIES, DEFAULT_CONFIG.maxRetries),
         timeout: config.get<number>(CONFIG_KEYS.TIMEOUT, DEFAULT_CONFIG.timeout),
         model: config.get<string>(CONFIG_KEYS.MODEL, DEFAULT_CONFIG.model),
+        groqModel: config.get<string>(CONFIG_KEYS.GROQ_MODEL, DEFAULT_CONFIG.groqModel),
     };
 }
 
 /**
  * 验证API Key格式是否有效
  *
- * Anthropic API Key格式：sk-ant-api03-xxxxxxx
- * 注意：这只是格式验证，不验证key是否真正有效（需要调用API才能验证）
- *
  * @param apiKey 要验证的API Key
+ * @param provider AI 提供商
  * @returns boolean 格式是否有效
- *
- * @example
- * if (!validateApiKey(config.apiKey)) {
- *     throw new Error('API Key格式无效');
- * }
  */
-export function validateApiKey(apiKey: string): boolean {
+export function validateApiKey(apiKey: string, _provider?: AIProvider): boolean {
     // 检查是否为空
     if (!apiKey || apiKey.trim() === '') {
         return false;
     }
 
-    // Anthropic API Key通常以 sk-ant- 开头
-    // 但为了兼容性，我们只检查基本长度（至少20个字符）
+    // 基本长度检查
     if (apiKey.length < 20) {
         return false;
     }
@@ -111,22 +125,39 @@ export function validateApiKey(apiKey: string): boolean {
 export async function ensureConfigured(): Promise<boolean> {
     const config = getConfig();
 
-    if (!validateApiKey(config.apiKey)) {
-        // 显示警告并提供快捷操作
-        const action = await vscode.window.showWarningMessage(
-            'Reference Manager Pro: 请先配置Anthropic API Key',
-            '打开设置'
-        );
-
-        if (action === '打开设置') {
-            // 打开设置页面并定位到我们的配置
-            await vscode.commands.executeCommand(
-                'workbench.action.openSettings',
-                'referenceManager.apiKey'
+    // 根据选择的提供商检查对应的 API Key
+    if (config.aiProvider === 'groq') {
+        if (!validateApiKey(config.groqApiKey, 'groq')) {
+            const action = await vscode.window.showWarningMessage(
+                'Reference Manager Pro: 请先配置 Groq API Key',
+                '打开设置'
             );
-        }
 
-        return false;
+            if (action === '打开设置') {
+                await vscode.commands.executeCommand(
+                    'workbench.action.openSettings',
+                    'referenceManager.groqApiKey'
+                );
+            }
+
+            return false;
+        }
+    } else {
+        if (!validateApiKey(config.apiKey, 'anthropic')) {
+            const action = await vscode.window.showWarningMessage(
+                'Reference Manager Pro: 请先配置 Anthropic API Key',
+                '打开设置'
+            );
+
+            if (action === '打开设置') {
+                await vscode.commands.executeCommand(
+                    'workbench.action.openSettings',
+                    'referenceManager.apiKey'
+                );
+            }
+
+            return false;
+        }
     }
 
     return true;

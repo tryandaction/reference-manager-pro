@@ -22,3 +22,11 @@ Thumbs.db
 # 环境变量（永远不要提交API密钥！）
 .env
 .env.local
+.env.development
+.env.production
+*.env
+
+# 私密配置
+secrets/
+*.secret
+*.key

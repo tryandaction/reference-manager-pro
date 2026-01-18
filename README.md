@@ -31,9 +31,12 @@ Format entries offline using rule-based formatting. No API key required, no usag
 ## 🚀 Quick Start
 
 1. Install the extension from VS Code Marketplace
-2. Open Settings and add your Anthropic API Key:
+2. Configure your AI provider (Groq recommended - it's free!):
+   - Press `Ctrl+,` to open Settings
    - Search for "Reference Manager"
-   - Enter your API key in `referenceManager.apiKey`
+   - Set `AI Provider` to `groq`
+   - Get a free API key from [console.groq.com](https://console.groq.com)
+   - Enter it in `Groq Api Key`
 3. Open a `.bib` file and start using!
 
 ### Commands
@@ -50,19 +53,29 @@ Format entries offline using rule-based formatting. No API key required, no usag
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `referenceManager.apiKey` | Your Anthropic API key | - |
+| `referenceManager.aiProvider` | AI provider (groq/anthropic) | groq |
+| `referenceManager.groqApiKey` | Groq API key (free!) | - |
+| `referenceManager.groqModel` | Groq model | llama-3.3-70b-versatile |
+| `referenceManager.apiKey` | Anthropic API key | - |
+| `referenceManager.model` | Anthropic model | claude-sonnet-4-20250514 |
 | `referenceManager.licenseKey` | Pro license key | - |
 | `referenceManager.maxRetries` | Max API retry attempts | 3 |
 | `referenceManager.timeout` | API timeout (ms) | 30000 |
-| `referenceManager.model` | Claude model to use | claude-sonnet-4-20250514 |
 
 ## 💡 Tips
 
-- **Get an API Key**: Visit [console.anthropic.com](https://console.anthropic.com) to get your Anthropic API key
+- **Use Groq (Free!)**: Get a free API key at [console.groq.com](https://console.groq.com) - fast and unlimited
+- **Or Anthropic**: Visit [console.anthropic.com](https://console.anthropic.com) for Claude (new users get $5 free)
 - **Upgrade to Pro**: Purchase a license at [Gumroad](https://gumroad.com/l/reference-manager-pro) for unlimited AI features
 - **Use Local Format**: When offline or to save API calls, use the local formatting option
 
 ## 📝 Changelog
+
+### v0.2.0
+- Added Groq AI support (free!)
+- Multiple AI provider selection (Groq/Anthropic)
+- Groq models: Llama 3.3 70B, Llama 3.1 8B, Mixtral, Gemma 2
+- Updated documentation
 
 ### v0.1.0
 - Initial release

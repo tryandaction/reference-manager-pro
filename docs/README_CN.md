@@ -127,11 +127,21 @@ Reference Manager Pro 是一款专为学术研究人员、学生和论文作者�
 
 ### 配置 API Key（启用 AI 功能）
 
-1. 访问 [console.anthropic.com](https://console.anthropic.com)
-2. 注册账号并获取 API Key
+推荐使用 **Groq**（免费且速度快）：
+
+1. 访问 [console.groq.com](https://console.groq.com)
+2. 注册账号并获取 API Key（免费）
 3. 在 VS Code 中按 `Ctrl+,` 打开设置
 4. 搜索 "Reference Manager"
-5. 在 `Api Key` 字段输入您的 API Key
+5. 确保 `AI Provider` 是 `groq`
+6. 在 `Groq Api Key` 字段输入您的 API Key
+
+或者使用 Anthropic（付费，新用户有 $5 免费额度）：
+
+1. 访问 [console.anthropic.com](https://console.anthropic.com)
+2. 注册账号并获取 API Key
+3. 在设置中将 `AI Provider` 改为 `anthropic`
+4. 在 `Api Key` 字段输入您的 API Key
 
 ### 基本使用流程
 
@@ -225,11 +235,39 @@ journal={Nature}
 
 | 设置项 | 说明 | 默认值 |
 |--------|------|--------|
+| `referenceManager.aiProvider` | AI 提供商 (groq/anthropic) | groq |
+| `referenceManager.groqApiKey` | Groq API Key (免费) | 空 |
+| `referenceManager.groqModel` | Groq 模型 | llama-3.3-70b-versatile |
 | `referenceManager.apiKey` | Anthropic API Key | 空 |
+| `referenceManager.model` | Anthropic 模型 | claude-sonnet-4-20250514 |
 | `referenceManager.licenseKey` | Pro 许可证密钥 | 空 |
 | `referenceManager.maxRetries` | API 请求最大重试次数 | 3 |
 | `referenceManager.timeout` | API 请求超时时间（毫秒） | 30000 |
-| `referenceManager.model` | 使用的 Claude 模型 | claude-sonnet-4-20250514 |
+
+### AI 提供商选择
+
+| 提供商 | 费用 | 速度 | 推荐场景 |
+|--------|------|------|----------|
+| **Groq** | 🆓 免费 | ⚡ 极快 | 推荐！日常使用 |
+| **Anthropic** | 💰 付费 | 中等 | 高质量需求 |
+
+#### 配置 Groq (推荐)
+
+1. 访问 [console.groq.com](https://console.groq.com)
+2. 注册账号（免费）
+3. 创建 API Key
+4. 在 VS Code 设置中：
+   - `AI Provider` 选择 `groq`
+   - `Groq Api Key` 填入你的 Key
+
+#### 配置 Anthropic
+
+1. 访问 [console.anthropic.com](https://console.anthropic.com)
+2. 注册账号（新用户有 $5 免费额度）
+3. 创建 API Key
+4. 在 VS Code 设置中：
+   - `AI Provider` 选择 `anthropic`
+   - `Api Key` 填入你的 Key
 
 ---
 
@@ -255,18 +293,31 @@ journal={Nature}
 
 ## 常见问题
 
-### Q: 没有 Anthropic API Key 能用吗？
+### Q: 没有 API Key 能用吗？
 
-**A:** 可以！本地格式化功能完全免费且无需 API Key。它可以：
-- 修复字段名拼写错误
-- 标准化字段顺序
-- 清理格式
+**A:** 可以！本地格式化功能完全免费且无需 API Key。
 
-AI 功能（智能格式化、未使用引用检测、重复检测）需要 API Key。
+如果想用 AI 功能，推荐使用 **Groq**（完全免费）：
+- 访问 [console.groq.com](https://console.groq.com) 注册
+- 获取免费 API Key
+- 在设置中配置即可
+
+### Q: Groq 和 Anthropic 有什么区别？
+
+**A:**
+| | Groq | Anthropic |
+|--|------|-----------|
+| 费用 | 🆓 免费 | 💰 付费 |
+| 速度 | ⚡ 极快 | 中等 |
+| 模型 | Llama 3.3 70B | Claude |
+
+推荐使用 Groq，免费且效果很好。
 
 ### Q: API Key 收费吗？
 
-**A:** Anthropic 提供免费额度，对于个人使用通常足够。访问 [console.anthropic.com](https://console.anthropic.com) 了解详情。
+**A:** 
+- **Groq**: 完全免费！
+- **Anthropic**: 提供免费额度，新用户有 $5
 
 ### Q: 免费版每天的使用次数什么时候重置？
 

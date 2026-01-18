@@ -16,12 +16,33 @@ tsconfig.json
 .git/**
 .gitignore
 
-# Node模块（会在安装时自动下载）
+# Node模块 - 保留运行时依赖
+# 排除开发依赖，但保留 @anthropic-ai/sdk
 node_modules/**
+!node_modules/@anthropic-ai/**
+!node_modules/agentkeepalive/**
+!node_modules/humanize-ms/**
+!node_modules/ms/**
+!node_modules/form-data-encoder/**
+!node_modules/formdata-node/**
+!node_modules/node-fetch/**
+!node_modules/web-streams-polyfill/**
 
 # 测试文件
 **/test/**
 **/*.test.js
+
+# 私密文件（绝对不要打包！）
+.env
+.env.*
+*.env
+secrets/**
+*.secret
+*.key
+
+# Kiro/Claude 配置
+.kiro/**
+.claude/**
 
 # 其他
 *.map

@@ -1,0 +1,57 @@
+% 模拟真实的 LaTeX 论文
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{cite}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\title{深度学习在图像识别中的应用研究}
+\author{张三}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+本文综述了深度学习在图像识别领域的最新进展。我们回顾了卷积神经网络的发展历程，
+并讨论了 ResNet \cite{he2016deep}、VGG \cite{simonyan2014very} 等经典架构的贡献。
+\end{abstract}
+
+\section{引言}
+
+深度学习近年来取得了巨大突破 \cite{lecun2015deep}。
+特别是在计算机视觉领域，卷积神经网络（CNN）已成为主流方法 \cite{krizhevsky2012imagenet}。
+
+\section{相关工作}
+
+\subsection{卷积神经网络}
+
+AlexNet \cite{krizhevsky2012imagenet} 在 2012 年 ImageNet 竞赛中取得突破性成果。
+随后，VGGNet \cite{simonyan2014very} 证明了网络深度的重要性。
+ResNet \cite{he2016deep} 通过残差连接解决了深层网络的训练问题。
+
+\subsection{注意力机制}
+
+Transformer 架构 \cite{vaswani2017attention} 引入了自注意力机制，
+后来被应用于视觉任务，产生了 Vision Transformer (ViT) \cite{dosovitskiy2020image}。
+
+\section{方法}
+
+我们的方法基于 \cite{he2016deep} 的残差学习框架，
+结合了 \cite{vaswani2017attention} 的注意力机制。
+
+\section{实验}
+
+实验在 ImageNet 数据集上进行 \cite{deng2009imagenet}。
+我们使用 PyTorch 框架 \cite{paszke2019pytorch} 实现模型。
+
+\section{结论}
+
+本文展示了深度学习在图像识别中的有效性。
+未来工作将探索更高效的架构设计。
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

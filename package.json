@@ -2,8 +2,8 @@
   "name": "reference-manager-pro",
   "displayName": "Reference Manager Pro",
   "description": "AI-powered LaTeX bibliography management - format BibTeX, detect unused citations, and remove duplicates",
-  "version": "0.1.0",
-  "publisher": "your-publisher-id",
+  "version": "0.2.0",
+  "publisher": "EI",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -30,7 +30,8 @@
 
   "activationEvents": [
     "onLanguage:latex",
-    "onLanguage:bibtex"
+    "onLanguage:bibtex",
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -74,19 +75,70 @@
     "menus": {
       "editor/context": [
         {
+          "command": "referenceManager.formatEntryLocal",
+          "when": "editorLangId == bibtex",
+          "group": "1_modification@1"
+        },
+        {
           "command": "referenceManager.formatEntry",
           "when": "editorLangId == bibtex",
-          "group": "1_modification"
+          "group": "1_modification@2"
+        },
+        {
+          "command": "referenceManager.findUnusedCitations",
+          "when": "editorLangId == bibtex",
+          "group": "1_modification@3"
+        },
+        {
+          "command": "referenceManager.removeDuplicates",
+          "when": "editorLangId == bibtex",
+          "group": "1_modification@4"
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "referenceManager.formatEntryLocal",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f",
+        "when": "editorLangId == bibtex && editorHasSelection"
+      },
+      {
+        "command": "referenceManager.formatEntry",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f",
+        "when": "editorLangId == bibtex && editorHasSelection"
+      },
+      {
+        "command": "referenceManager.findUnusedCitations",
+        "key": "ctrl+shift+u",
+        "mac": "cmd+shift+u",
+        "when": "editorLangId == bibtex"
+      }
+    ],
     "configuration": {
       "title": "Reference Manager Pro",
       "properties": {
+        "referenceManager.aiProvider": {
+          "type": "string",
+          "default": "groq",
+          "enum": ["anthropic", "groq"],
+          "enumDescriptions": [
+            "Anthropic Claude (需要付费 API Key)",
+            "Groq (免费，速度快)"
+          ],
+          "description": "选择 AI 提供商"
+        },
         "referenceManager.apiKey": {
           "type": "string",
           "default": "",
-          "description": "Your Anthropic API key (get from console.anthropic.com)",
+          "description": "Anthropic API key (仅当选择 Anthropic 时需要)",
+          "scope": "application"
+        },
+        "referenceManager.groqApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Groq API key (从 console.groq.com 获取，免费)",
           "scope": "application"
         },
         "referenceManager.maxRetries": {
@@ -106,7 +158,19 @@
         "referenceManager.model": {
           "type": "string",
           "default": "claude-sonnet-4-20250514",
-          "description": "Claude model to use for AI operations"
+          "description": "Claude model (仅当选择 Anthropic 时使用)"
+        },
+        "referenceManager.groqModel": {
+          "type": "string",
+          "default": "llama-3.3-70b-versatile",
+          "enum": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"],
+          "enumDescriptions": [
+            "Llama 3.3 70B - 最强大，推荐使用",
+            "Llama 3.1 8B - 更快速",
+            "Mixtral 8x7B - 平衡性能",
+            "Gemma 2 9B - Google 模型"
+          ],
+          "description": "Groq 模型选择"
         },
         "referenceManager.licenseKey": {
           "type": "string",
