@@ -15,8 +15,9 @@ export interface LocalFormatOptions {
 /**
  * 常见期刊/会议的标准缩写映射（完整版）
  * 基于 ISO 4 标准和各出版商官方缩写
+ * 导出供 config.ts 使用
  */
-const DEFAULT_JOURNAL_ABBREVIATIONS: Record<string, string> = {
+export const DEFAULT_JOURNAL_ABBREVIATIONS: Record<string, string> = {
     // ============ Physical Review 系列 (APS) ============
     'Physical Review Letters': 'Phys. Rev. Lett.',
     'Phys. Rev. Lett.': 'Phys. Rev. Lett.',

@@ -2,6 +2,15 @@
 
 All notable changes to Reference Manager Pro will be documented in this file.
 
+## [0.3.2] - 2026-02-03
+
+### Fixed
+- 🐛 **期刊缩写映射生效**：修复 200+ 期刊缩写映射未被应用的 bug，现在期刊名称会正确缩写（如 `Physical Review Applied` → `Phys. Rev. Applied`）
+
+### Technical Details
+- 从 `localFormatter.ts` 导出 `DEFAULT_JOURNAL_ABBREVIATIONS` 并在 `config.ts` 中使用
+- 确保配置系统使用完整的 200+ 期刊映射表
+
 ## [0.3.1] - 2026-02-03
 
 ### Added

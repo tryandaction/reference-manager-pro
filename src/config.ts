@@ -6,6 +6,7 @@
  */
 
 import * as vscode from 'vscode';
+import { DEFAULT_JOURNAL_ABBREVIATIONS } from './localFormatter';
 
 /**
  * AI 提供商类型
@@ -117,43 +118,7 @@ export const DEFAULT_CONFIG: ExtensionConfig = {
     localFormat: {
         normalizeAuthors: true,
         protectTitleWords: ['LaTeX', 'BibTeX', 'arXiv', 'GitHub', 'OpenAI', 'GPU', 'CPU', 'AI', 'DOI', 'NOON', 'Hong-Ou-Mandel', 'Rydberg', 'CP', 'PT'],
-        journalAbbreviations: {
-            // Physics - General
-            'Physical Review Letters': 'Phys. Rev. Lett.',
-            'Physical Review A': 'Phys. Rev. A',
-            'Physical Review B': 'Phys. Rev. B',
-            'Physical Review D': 'Phys. Rev. D',
-            'Physical Review Applied': 'Phys. Rev. Appl.',
-            'Reviews of Modern Physics': 'Rev. Mod. Phys.',
-            'PRX Quantum': 'PRX Quantum',
-            // Nature series
-            'Nature': 'Nature',
-            'Nature Physics': 'Nat. Phys.',
-            'Nature Photonics': 'Nat. Photonics',
-            'Nature Communications': 'Nat. Commun.',
-            // Science series
-            'Science': 'Science',
-            'Scientific Reports': 'Sci. Rep.',
-            // Optics
-            'Optica': 'Optica',
-            'Optics Express': 'Opt. Express',
-            // Quantum
-            'Quantum Science and Technology': 'Quantum Sci. Technol.',
-            'New Journal of Physics': 'New J. Phys.',
-            // Materials
-            'Nano Letters': 'Nano Lett.',
-            'Applied Physics Letters': 'Appl. Phys. Lett.',
-            'Applied Physics Reviews': 'Appl. Phys. Rev.',
-            // Nuclear
-            'Nuclear Physics B': 'Nucl. Phys. B',
-            'Physics Letters B': 'Phys. Lett. B',
-            'Soviet Journal of Nuclear Physics': 'Sov. J. Nucl. Phys.',
-            // Engineering
-            'Review of Scientific Instruments': 'Rev. Sci. Instrum.',
-            'Opto-Electronics Review': 'Opto-Electron. Rev.',
-            // Journals (full name variants)
-            'Journal of Optics B: Quantum and Semiclassical Optics': 'J. Opt. B: Quantum Semiclass. Opt.',
-        }
+        journalAbbreviations: DEFAULT_JOURNAL_ABBREVIATIONS,
     },
     validation: {
         enabled: true,
