@@ -1,9 +1,10 @@
 {
   "name": "reference-manager-pro",
   "displayName": "Reference Manager Pro",
-  "description": "AI-powered LaTeX bibliography management - format BibTeX, detect unused citations, and remove duplicates",
-  "version": "0.2.0",
+  "description": "Smart Fix, quality validation, and change history for BibTeX in VS Code",
+  "version": "0.3.1",
   "publisher": "EI",
+  "icon": "assets/icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -18,6 +19,8 @@
     "reference",
     "citation",
     "ai",
+    "validation",
+    "history",
     "formatting",
     "academic",
     "research",
@@ -31,24 +34,62 @@
   "activationEvents": [
     "onLanguage:latex",
     "onLanguage:bibtex",
+    "onCommand:referenceManager.smartFix",
+    "onCommand:referenceManager.smartFixAll",
+    "onCommand:referenceManager.validateEntries",
+    "onCommand:referenceManager.showHistory",
+    "onCommand:referenceManager.formatEntry",
+    "onCommand:referenceManager.formatEntryLocal",
+    "onCommand:referenceManager.formatAllEntries",
+    "onCommand:referenceManager.formatAllEntriesLocal",
+    "onCommand:referenceManager.findUnusedCitations",
+    "onCommand:referenceManager.removeDuplicates",
+    "onCommand:referenceManager.activateLicense",
+    "onCommand:referenceManager.viewLicenseStatus",
     "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "submenus": [
+      {
+        "id": "referenceManager.advancedMenu",
+        "label": "Reference Manager ▸ Advanced"
+      }
+    ],
     "commands": [
       {
+        "command": "referenceManager.smartFix",
+        "title": "Smart Fix",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.smartFixAll",
+        "title": "Batch Official Fix (Smart Fix All)",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.validateEntries",
+        "title": "Validate References",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.showHistory",
+        "title": "History",
+        "category": "Reference Manager"
+      },
+      {
         "command": "referenceManager.formatEntry",
-        "title": "Format BibTeX Entry",
+        "title": "Advanced: Format Entry (AI)",
         "category": "Reference Manager"
       },
       {
         "command": "referenceManager.findUnusedCitations",
-        "title": "Find Unused Citations",
+        "title": "Advanced: Find Unused Citations",
         "category": "Reference Manager"
       },
       {
         "command": "referenceManager.removeDuplicates",
-        "title": "Remove Duplicate Entries",
+        "title": "Advanced: Remove Duplicate Entries",
         "category": "Reference Manager"
       },
       {
@@ -63,56 +104,72 @@
       },
       {
         "command": "referenceManager.formatEntryLocal",
-        "title": "Format BibTeX Entry (Local)",
+        "title": "Advanced: Format Entry (Local)",
         "category": "Reference Manager"
       },
       {
         "command": "referenceManager.formatAllEntries",
-        "title": "Format All Entries (Pro)",
+        "title": "Advanced: Format All Entries (Pro)",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.formatAllEntriesLocal",
+        "title": "Advanced: Format All Entries (Local)",
         "category": "Reference Manager"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "command": "referenceManager.formatEntryLocal",
+          "command": "referenceManager.smartFix",
           "when": "editorLangId == bibtex",
-          "group": "1_modification@1"
+          "group": "referenceManager@1"
         },
         {
-          "command": "referenceManager.formatEntry",
+          "command": "referenceManager.validateEntries",
           "when": "editorLangId == bibtex",
-          "group": "1_modification@2"
+          "group": "referenceManager@2"
         },
         {
-          "command": "referenceManager.findUnusedCitations",
+          "command": "referenceManager.showHistory",
           "when": "editorLangId == bibtex",
-          "group": "1_modification@3"
+          "group": "referenceManager@3"
         },
         {
-          "command": "referenceManager.removeDuplicates",
+          "submenu": "referenceManager.advancedMenu",
           "when": "editorLangId == bibtex",
-          "group": "1_modification@4"
+          "group": "referenceManager@4"
+        }
+      ],
+      "referenceManager.advancedMenu": [
+        {
+          "command": "referenceManager.smartFixAll"
+        },
+        {
+          "command": "referenceManager.removeDuplicates"
+        },
+        {
+          "command": "referenceManager.findUnusedCitations"
+        },
+        {
+          "command": "referenceManager.formatEntryLocal"
+        },
+        {
+          "command": "referenceManager.formatEntry"
+        },
+        {
+          "command": "referenceManager.formatAllEntriesLocal"
+        },
+        {
+          "command": "referenceManager.formatAllEntries"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "referenceManager.formatEntryLocal",
+        "command": "referenceManager.smartFix",
         "key": "ctrl+shift+f",
         "mac": "cmd+shift+f",
-        "when": "editorLangId == bibtex && editorHasSelection"
-      },
-      {
-        "command": "referenceManager.formatEntry",
-        "key": "ctrl+alt+f",
-        "mac": "cmd+alt+f",
-        "when": "editorLangId == bibtex && editorHasSelection"
-      },
-      {
-        "command": "referenceManager.findUnusedCitations",
-        "key": "ctrl+shift+u",
-        "mac": "cmd+shift+u",
         "when": "editorLangId == bibtex"
       }
     ],
@@ -177,38 +234,103 @@
           "default": "",
           "description": "Your License Key for Pro features (purchase from Gumroad)",
           "scope": "application"
+        },
+        "referenceManager.localFormat.normalizeAuthors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Local formatter: normalize author names to \"Last, First\" when possible"
+        },
+        "referenceManager.localFormat.protectTitleWords": {
+          "type": "array",
+          "default": ["LaTeX", "BibTeX", "arXiv", "GitHub", "OpenAI", "GPU", "CPU", "AI", "DOI"],
+          "items": { "type": "string" },
+          "description": "Local formatter: wrap these words in {} in title to preserve capitalization"
+        },
+        "referenceManager.localFormat.journalAbbreviations": {
+          "type": "object",
+          "default": {
+            "Physical Review Letters": "Phys. Rev. Lett.",
+            "Nature Communications": "Nat. Commun."
+          },
+          "description": "Local formatter: mapping of journal/conference full name -> abbreviation"
+        },
+        "referenceManager.validation.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reference validation"
+        },
+        "referenceManager.validation.strictness": {
+          "type": "string",
+          "default": "normal",
+          "enum": ["loose", "normal", "strict"],
+          "description": "Validation strictness"
+        },
+        "referenceManager.officialMetadata.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable official metadata lookup by DOI"
+        },
+        "referenceManager.officialMetadata.timeout": {
+          "type": "number",
+          "default": 8000,
+          "minimum": 1000,
+          "maximum": 30000,
+          "description": "Official metadata lookup timeout (ms)"
+        },
+        "referenceManager.officialMetadata.keyPolicy": {
+          "type": "string",
+          "default": "officialAlways",
+          "enum": ["preserve", "officialWhenUnused", "officialAlways"],
+          "enumDescriptions": [
+            "Always keep original cite key",
+            "Use official key only when the original key is not used in .tex",
+            "Always replace with official key (recommended)"
+          ],
+          "description": "Cite key policy when official metadata is available"
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run bundle",
+    "bundle": "node ./scripts/esbuild.js",
+    "bundle:watch": "node ./scripts/esbuild.js --watch",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "lint": "eslint src --ext ts",
     "test": "vitest run",
+    "test:integration": "npm run compile && node ./out/test/integration/runTest.js",
     "test:watch": "vitest",
     "package": "vsce package",
     "publish": "vsce publish"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.19.28",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^2.22.0",
+    "esbuild": "^0.25.9",
     "eslint": "^8.54.0",
     "fast-check": "^4.5.3",
+    "mocha": "^10.8.2",
     "typescript": "^5.3.0",
     "vitest": "^4.0.16"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.0"
+    "@anthropic-ai/sdk": "^0.32.0",
+    "undici": "^5.28.4"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/reference-manager-pro"
+    "url": "https://github.com/tryandaction/reference-manager-pro"
   },
+  "bugs": {
+    "url": "https://github.com/tryandaction/reference-manager-pro/issues"
+  },
+  "homepage": "https://github.com/tryandaction/reference-manager-pro",
   "license": "MIT"
 }

@@ -7,9 +7,13 @@
 
 import * as vscode from 'vscode';
 import { AIFormatter, AIError } from './aiFormatter';
-import { parseBibFile, BibEntry, getEntryDescription } from './bibParser';
-import { scanWorkspaceForCitations, findBibFiles } from './citationScanner';
+import { parseBibFile, parseSingleEntry, serializeBibEntry, BibEntry, getEntryDescription } from './bibParser';
+import { scanWorkspaceForCitations, findBibFiles, findTexFiles } from './citationScanner';
 import { getConfig, ensureConfigured, onConfigChange } from './config';
+import { ChangeHistory } from './changeHistory';
+import { validateEntries, EntryValidationResult } from './metadataValidator';
+import { resolveOfficialBibtexFromEntry, extractDoiFromEntryText } from './metadataResolver';
+import { OfficialKeyPolicy } from './config';
 import {
     initLicenseModule,
     checkFormatUsageLimit,
@@ -22,7 +26,7 @@ import {
     getLicenseStatus,
     trackSuccessAndMaybeRequestRating
 } from './license';
-import { formatBibEntryLocal } from './localFormatter';
+import { formatBibEntryLocalWithOptions } from './localFormatter';
 
 /** AI格式化器实例 */
 let formatter: AIFormatter | null = null;
@@ -30,6 +34,13 @@ let formatter: AIFormatter | null = null;
 /** 输出面板 */
 let outputChannel: vscode.OutputChannel | null = null;
 
+/** 变更历史 */
+let changeHistory: ChangeHistory | null = null;
+
+interface ChangeMeta {
+    source?: 'local' | 'ai' | 'official' | 'system';
+    confidence?: number | null;
+}
 /**
  * 重复条目对接口
  */
@@ -40,6 +51,44 @@ interface DuplicatePair {
     reason: string;
 }
 
+/** 避免在巨大 .bib 文件上做 O(n^2) 的 AI 去重比较 */
+const MAX_DUPLICATE_ENTRIES = 80;
+
+function buildFormattedBibFileContent(
+    content: string,
+    entries: BibEntry[],
+    formatEntry: (entry: BibEntry) => string
+): string {
+    if (entries.length === 0) {
+        return content;
+    }
+
+    const ordered = [...entries].sort((a, b) => a.startIndex - b.startIndex);
+    let cursor = 0;
+    let out = '';
+
+    for (let i = 0; i < ordered.length; i++) {
+        const entry = ordered[i]!;
+        const next = ordered[i + 1];
+
+        out += content.slice(cursor, entry.startIndex);
+        out += formatEntry(entry).trim();
+
+        cursor = entry.endIndex + 1;
+
+        if (next) {
+            const between = content.slice(cursor, next.startIndex);
+            // 如果两条条目之间只有空白，则标准化为一个空行
+            out += between.trim().length === 0 ? '\n\n' : between;
+            cursor = next.startIndex;
+        }
+    }
+
+    out += content.slice(cursor);
+    // 统一文件末尾换行
+    return out.replace(/\s*$/, '\n');
+}
+
 /**
  * 获取或创建输出面板
  */
@@ -48,6 +97,410 @@ function getOutputChannel(): vscode.OutputChannel {
         outputChannel = vscode.window.createOutputChannel('Reference Manager Pro');
     }
     return outputChannel;
+}
+
+function createChangeId(): string {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getShortFileName(path: string): string {
+    return path.split(/[/\\]/).pop() ?? path;
+}
+
+function truncateValue(value: string, maxLength: number): string {
+    if (value.length <= maxLength) {
+        return value;
+    }
+    return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function compactAuthorValue(value: string): string {
+    const parts = value.split(/\s+and\s+/i).map(part => part.trim()).filter(Boolean);
+    if (parts.length <= 2) {
+        return value;
+    }
+    return `${parts[0]} and ${parts[1]} et al.`;
+}
+
+function compactTitleValue(value: string): string {
+    return truncateValue(value, 60);
+}
+
+function getConfidenceLabel(score: number): 'High' | 'Medium' | 'Low' {
+    if (score >= 85) {
+        return 'High';
+    }
+    if (score >= 65) {
+        return 'Medium';
+    }
+    return 'Low';
+}
+
+function formatSourceLabel(source?: 'local' | 'ai' | 'official' | 'system'): string {
+    switch (source) {
+        case 'ai':
+            return 'AI 增强';
+        case 'local':
+            return '本地规则';
+        case 'official':
+            return '官方元数据';
+        case 'system':
+            return '系统操作';
+        default:
+            return '未知来源';
+    }
+}
+
+function deriveKeyFromDoi(doi: string): string | null {
+    const trimmed = doi
+        .trim()
+        .replace(/^doi:\s*/i, '')
+        .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '');
+
+    // Physical Review 系列 (APS): 10.1103/physrevlett.120.093201 -> PhysRevLett.120.093201
+    // 保持 APS 官方的 key 格式
+    const prMatch = trimmed.match(/^10\.1103\/(.+)$/i);
+    if (prMatch) {
+        // 标准化大小写：physrevlett -> PhysRevLett
+        const suffix = prMatch[1]!;
+        const normalized = suffix.replace(/^(physrev[a-z]*|revmodphys|prx[a-z]*)/i, (m) => {
+            const map: Record<string, string> = {
+                'physrevlett': 'PhysRevLett',
+                'physreva': 'PhysRevA',
+                'physrevb': 'PhysRevB',
+                'physrevc': 'PhysRevC',
+                'physrevd': 'PhysRevD',
+                'physreve': 'PhysRevE',
+                'physrevx': 'PhysRevX',
+                'physrevapplied': 'PhysRevApplied',
+                'physrevresearch': 'PhysRevResearch',
+                'physrevfluids': 'PhysRevFluids',
+                'physrevmaterials': 'PhysRevMaterials',
+                'physrevaccelbeams': 'PhysRevAccelBeams',
+                'physrevphyseducres': 'PhysRevPhysEducRes',
+                'revmodphys': 'RevModPhys',
+                'prxquantum': 'PRXQuantum',
+                'prxenergy': 'PRXEnergy',
+                'prxlife': 'PRXLife',
+            };
+            return map[m.toLowerCase()] ?? m;
+        });
+        return normalized;
+    }
+
+    // Nature 系列 (Springer Nature): 10.1038/s41586-023-05740-2 -> Nature:s41586-023-05740-2
+    const natureMatch = trimmed.match(/^10\.1038\/(.+)$/i);
+    if (natureMatch) {
+        return `Nature:${natureMatch[1]}`;
+    }
+
+    // Optica/OSA 系列: 10.1364/optica.397235 -> Optica:optica.397235
+    const opticaMatch = trimmed.match(/^10\.1364\/(.+)$/i);
+    if (opticaMatch) {
+        return `Optica:${opticaMatch[1]}`;
+    }
+
+    // IOP Publishing: 10.1088/2058-9565/ab8962 -> IOP:2058-9565/ab8962
+    const iopMatch = trimmed.match(/^10\.1088\/(.+)$/i);
+    if (iopMatch) {
+        return `IOP:${iopMatch[1]}`;
+    }
+
+    // Elsevier: 10.1016/0370-2693(81)90590-6 -> Elsevier:0370-2693(81)90590-6
+    const elsevierMatch = trimmed.match(/^10\.1016\/(.+)$/i);
+    if (elsevierMatch) {
+        return `Elsevier:${elsevierMatch[1]}`;
+    }
+
+    // AIP Publishing: 10.1063/1.4938164 -> AIP:1.4938164
+    const aipMatch = trimmed.match(/^10\.1063\/(.+)$/i);
+    if (aipMatch) {
+        return `AIP:${aipMatch[1]}`;
+    }
+
+    // Springer (非 Nature): 10.1007/s00340-003-1337-x -> Springer:s00340-003-1337-x
+    const springerMatch = trimmed.match(/^10\.1007\/(.+)$/i);
+    if (springerMatch) {
+        return `Springer:${springerMatch[1]}`;
+    }
+
+    // ACS (American Chemical Society): 10.1021/acs.nanolett.9b03512 -> ACS:acs.nanolett.9b03512
+    const acsMatch = trimmed.match(/^10\.1021\/(.+)$/i);
+    if (acsMatch) {
+        return `ACS:${acsMatch[1]}`;
+    }
+
+    // Science/AAAS: 10.1126/science.xxx -> Science:science.xxx
+    const scienceMatch = trimmed.match(/^10\.1126\/(.+)$/i);
+    if (scienceMatch) {
+        return `Science:${scienceMatch[1]}`;
+    }
+
+    // Wiley: 10.1002/xxx -> Wiley:xxx
+    const wileyMatch = trimmed.match(/^10\.1002\/(.+)$/i);
+    if (wileyMatch) {
+        return `Wiley:${wileyMatch[1]}`;
+    }
+
+    // IEEE: 10.1109/xxx -> IEEE:xxx
+    const ieeeMatch = trimmed.match(/^10\.1109\/(.+)$/i);
+    if (ieeeMatch) {
+        return `IEEE:${ieeeMatch[1]}`;
+    }
+
+    // arXiv: 10.48550/arxiv.xxx -> arXiv:xxx
+    const arxivMatch = trimmed.match(/^10\.48550\/arxiv\.(.+)$/i);
+    if (arxivMatch) {
+        return `arXiv:${arxivMatch[1]}`;
+    }
+
+    // 通用格式：使用 DOI 前缀作为出版商标识
+    // 10.xxxx/suffix -> DOI:10.xxxx/suffix (替换 / 为 :)
+    return `DOI:${trimmed.replace(/\//g, ':')}`;
+}
+
+function appendKeyComment(entryText: string, oldKey: string): string {
+    const lines = entryText.split('\n');
+    if (lines.length === 0) {
+        return entryText;
+    }
+    const firstLine = lines[0] ?? '';
+    if (firstLine.includes('oldkey:')) {
+        return entryText;
+    }
+    lines[0] = `${firstLine} % oldkey: ${oldKey}`;
+    return lines.join('\n');
+}
+
+async function resolveKeyPolicyDecision(
+    policy: OfficialKeyPolicy,
+    originalKey: string,
+    officialKey: string,
+    existingKeys: Set<string>
+): Promise<{ useOfficial: boolean; reason?: string; usedKeys?: Set<string> }> {
+    if (policy === 'preserve') {
+        return { useOfficial: false, reason: '保持原引用 key' };
+    }
+
+    const canScan = Boolean(vscode.workspace.workspaceFolders);
+    const usedKeys = policy === 'officialWhenUnused' || policy === 'officialAlways'
+        ? (canScan ? await scanWorkspaceForCitations() : undefined)
+        : undefined;
+
+    if (policy === 'officialWhenUnused' && usedKeys?.has(originalKey)) {
+        return { useOfficial: false, reason: '原 key 已在 .tex 中使用', usedKeys };
+    }
+    if (policy === 'officialWhenUnused' && !usedKeys) {
+        return { useOfficial: false, reason: '未检测到工作区，保留原 key', usedKeys };
+    }
+
+    if (existingKeys.has(officialKey) && officialKey !== originalKey) {
+        return { useOfficial: false, reason: '官方 key 与现有条目冲突', usedKeys };
+    }
+
+    return { useOfficial: true, usedKeys };
+}
+
+function buildEntryDiffSummary(
+    beforeText: string,
+    afterText: string,
+    includeValues: boolean
+): string[] {
+    const beforeEntry = parseSingleEntry(beforeText);
+    const afterEntry = parseSingleEntry(afterText);
+    if (!beforeEntry || !afterEntry) {
+        return ['已执行格式化（无法生成字段级摘要）'];
+    }
+
+    const lines: string[] = [];
+    const allFields = new Set([
+        ...Object.keys(beforeEntry.fields),
+        ...Object.keys(afterEntry.fields),
+    ]);
+
+    const sortedFields = Array.from(allFields).sort();
+    const primaryFields = new Set(['author', 'title', 'journal', 'booktitle', 'year', 'doi']);
+    const primary: string[] = [];
+    const secondary: string[] = [];
+
+    for (const field of sortedFields) {
+        if (primaryFields.has(field)) {
+            primary.push(field);
+        } else {
+            secondary.push(field);
+        }
+    }
+
+    const orderedFields = [...primary, ...secondary];
+    const maxValueLength = 80;
+    const maxLines = 8;
+    let secondaryChanges = 0;
+
+    for (const field of orderedFields) {
+        const beforeValue = beforeEntry.fields[field];
+        const afterValue = afterEntry.fields[field];
+        if (beforeValue === afterValue) {
+            continue;
+        }
+        const isSecondary = !primaryFields.has(field);
+        if (isSecondary) {
+            secondaryChanges++;
+        }
+
+        if (beforeValue === undefined && afterValue !== undefined) {
+            if (!isSecondary && lines.length < maxLines) {
+                let value = includeValues ? truncateValue(afterValue, maxValueLength) : '';
+                if (field === 'author') {
+                    value = compactAuthorValue(value);
+                }
+                if (field === 'title') {
+                    value = compactTitleValue(value);
+                }
+                lines.push(includeValues ? `+ ${field}: ${value}` : `+ ${field} 已添加`);
+            }
+            continue;
+        }
+        if (beforeValue !== undefined && afterValue === undefined) {
+            if (!isSecondary && lines.length < maxLines) {
+                let value = includeValues ? truncateValue(beforeValue, maxValueLength) : '';
+                if (field === 'author') {
+                    value = compactAuthorValue(value);
+                }
+                if (field === 'title') {
+                    value = compactTitleValue(value);
+                }
+                lines.push(includeValues ? `- ${field}: ${value}` : `- ${field} 已移除`);
+            }
+            continue;
+        }
+        if (!isSecondary && lines.length < maxLines) {
+            let beforeShort = includeValues ? truncateValue(beforeValue ?? '', maxValueLength) : '';
+            let afterShort = includeValues ? truncateValue(afterValue ?? '', maxValueLength) : '';
+            if (field === 'author') {
+                beforeShort = compactAuthorValue(beforeShort);
+                afterShort = compactAuthorValue(afterShort);
+            }
+            if (field === 'title') {
+                beforeShort = compactTitleValue(beforeShort);
+                afterShort = compactTitleValue(afterShort);
+            }
+            lines.push(includeValues ? `~ ${field}: ${beforeShort} → ${afterShort}` : `~ ${field} 已更新`);
+        }
+    }
+
+    if (secondaryChanges > 0) {
+        lines.push(`… 另有 ${secondaryChanges} 个非关键字段变更`);
+    }
+
+    if (lines.length === 0) {
+        lines.push('未检测到字段级变化');
+    }
+    return lines;
+}
+
+function extractEntryKey(text: string): string | null {
+    const entry = parseSingleEntry(text);
+    return entry ? entry.key : null;
+}
+
+function renderSmartFixSummary(
+    label: string,
+    beforeText: string,
+    afterText: string,
+    score: number | null,
+    source: 'local' | 'ai' | 'official',
+    notes?: string[]
+): void {
+    const channel = getOutputChannel();
+    channel.show(true);
+    channel.appendLine('───────────────────────────────────────────────────────────');
+    const entryKey = extractEntryKey(afterText) ?? extractEntryKey(beforeText);
+    const keyPart = entryKey ? ` · ${entryKey}` : '';
+    channel.appendLine(`✨ Smart Fix 摘要: ${label}${keyPart}`);
+    channel.appendLine(`🧩 来源: ${formatSourceLabel(source)}`);
+
+    if (score !== null) {
+        const confidence = getConfidenceLabel(score);
+        channel.appendLine(`🎯 可信度: ${confidence} (${score}/100)`);
+    }
+
+    const lines = buildEntryDiffSummary(beforeText, afterText, true);
+    for (const line of lines) {
+        channel.appendLine(`  ${line}`);
+    }
+
+    if (notes && notes.length > 0) {
+        channel.appendLine('  —');
+        for (const note of notes) {
+            channel.appendLine(`  ${note}`);
+        }
+    }
+    channel.appendLine('');
+}
+
+async function applyEditorEditWithHistory(
+    editor: vscode.TextEditor,
+    label: string,
+    edit: (editBuilder: vscode.TextEditorEdit) => void,
+    meta?: ChangeMeta
+): Promise<void> {
+    const before = editor.document.getText();
+    await editor.edit(edit);
+    const after = editor.document.getText();
+    if (before !== after && changeHistory) {
+        changeHistory.add({
+            id: createChangeId(),
+            label,
+            timestamp: new Date().toISOString(),
+            uri: editor.document.uri.toString(),
+            before,
+            after,
+            source: meta?.source,
+            confidence: meta?.confidence,
+        });
+    }
+}
+
+function logInfo(message: string): void {
+    const oc = getOutputChannel();
+    oc.appendLine(`[INFO ${new Date().toISOString()}] ${message}`);
+}
+
+function logError(message: string, error?: unknown): void {
+    const oc = getOutputChannel();
+    oc.appendLine(`[ERROR ${new Date().toISOString()}] ${message}`);
+    if (error instanceof Error) {
+        oc.appendLine(error.stack ?? error.message);
+    } else if (error !== undefined) {
+        oc.appendLine(String(error));
+    }
+    oc.show(true);
+}
+
+function getEntryTextAndRange(editor: vscode.TextEditor): { text: string; range: vscode.Range } | null {
+    const doc = editor.document;
+    const selection = editor.selection;
+
+    // 1) 用户有选中内容：直接用选中内容（但要求看起来像 BibTeX 条目）
+    if (!selection.isEmpty) {
+        const text = doc.getText(selection);
+        if (text.trim()) {
+            return { text, range: new vscode.Range(selection.start, selection.end) };
+        }
+    }
+
+    // 2) 无选中：尝试根据光标位置定位所在条目（真正“一键”）
+    const content = doc.getText();
+    const cursorOffset = doc.offsetAt(selection.active);
+    const parsed = parseBibFile(content);
+    const hit = parsed.entries.find(e => cursorOffset >= e.startIndex && cursorOffset <= e.endIndex);
+    if (!hit) {
+        return null;
+    }
+
+    const startPos = doc.positionAt(hit.startIndex);
+    const endPos = doc.positionAt(hit.endIndex + 1);
+    return { text: hit.rawText, range: new vscode.Range(startPos, endPos) };
 }
 
 /**
@@ -76,6 +529,7 @@ function initFormatter(): AIFormatter | null {
  * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 7.2
  */
 async function handleFormatEntry(): Promise<void> {
+    logInfo('Command: formatEntry');
     // 1. 获取当前编辑器和选中文本
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -83,14 +537,14 @@ async function handleFormatEntry(): Promise<void> {
         return;
     }
 
-    const selection = editor.selection;
-    const text = editor.document.getText(selection);
-
-    // 2. 验证选中内容非空 (Req 1.7)
-    if (!text.trim()) {
-        vscode.window.showWarningMessage('请先选中要格式化的BibTeX条目');
+    const target = getEntryTextAndRange(editor);
+    if (!target) {
+        vscode.window.showWarningMessage('请先选中要格式化的BibTeX条目，或将光标放在条目内部');
         return;
     }
+
+    // 2. 验证选中内容非空 (Req 1.7)
+    const text = target.text;
 
     // 3. 检查使用限制 (Req 7.2)
     if (!await checkFormatUsageLimit()) {
@@ -121,9 +575,14 @@ async function handleFormatEntry(): Promise<void> {
         }, async () => {
             const formatted = await formatter!.formatBibEntry(text);
             // 替换选中文本 (Req 1.2)
-            await editor.edit(editBuilder => {
-                editBuilder.replace(selection, formatted);
-            });
+            await applyEditorEditWithHistory(
+                editor,
+                `Format Entry (AI): ${getShortFileName(editor.document.fileName)}`,
+                editBuilder => {
+                    editBuilder.replace(target.range, formatted);
+                },
+                { source: 'ai' }
+            );
         });
 
         // 7. 增加使用次数 (Req 7.1)
@@ -131,10 +590,12 @@ async function handleFormatEntry(): Promise<void> {
 
         // 8. 显示成功消息 (Req 1.4)
         vscode.window.showInformationMessage('✅ Entry formatted!');
+        logInfo('formatEntry: success');
 
         // 9. 追踪成功操作并可能请求评分 (Req 11.5)
         await trackSuccessAndMaybeRequestRating();
     } catch (error) {
+        logError('formatEntry: failed', error);
         // 9. 处理错误 (Req 1.5, 1.6)
         if (error instanceof AIError) {
             vscode.window.showErrorMessage(`❌ ${error.getUserMessage()}`);
@@ -150,6 +611,7 @@ async function handleFormatEntry(): Promise<void> {
  * Requirements: 9.1, 9.4, 9.5
  */
 async function handleFormatEntryLocal(): Promise<void> {
+    logInfo('Command: formatEntryLocal');
     // 1. 获取当前编辑器和选中文本
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -157,30 +619,35 @@ async function handleFormatEntryLocal(): Promise<void> {
         return;
     }
 
-    const selection = editor.selection;
-    const text = editor.document.getText(selection);
-
-    // 2. 验证选中内容非空
-    if (!text.trim()) {
-        vscode.window.showWarningMessage('请先选中要格式化的BibTeX条目');
+    const target = getEntryTextAndRange(editor);
+    if (!target) {
+        vscode.window.showWarningMessage('请先选中要格式化的BibTeX条目，或将光标放在条目内部');
         return;
     }
 
     // 3. 本地格式化（无需API Key检查，无使用次数限制）
     try {
-        const formatted = formatBibEntryLocal(text);
+        const localOptions = getConfig().localFormat;
+        const formatted = formatBibEntryLocalWithOptions(target.text, localOptions);
 
         // 替换选中文本
-        await editor.edit(editBuilder => {
-            editBuilder.replace(selection, formatted);
-        });
+        await applyEditorEditWithHistory(
+            editor,
+            `Format Entry (Local): ${getShortFileName(editor.document.fileName)}`,
+            editBuilder => {
+                editBuilder.replace(target.range, formatted);
+            },
+            { source: 'local' }
+        );
 
         // 显示成功消息 (Req 9.5)
         vscode.window.showInformationMessage('✅ Entry formatted (local mode)');
+        logInfo('formatEntryLocal: success');
 
         // 追踪成功操作 (Req 11.5)
         await trackSuccessAndMaybeRequestRating();
     } catch (error) {
+        logError('formatEntryLocal: failed', error);
         vscode.window.showErrorMessage(`❌ 本地格式化失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
 }
@@ -190,6 +657,7 @@ async function handleFormatEntryLocal(): Promise<void> {
  * Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8
  */
 async function handleBatchFormat(): Promise<void> {
+    logInfo('Command: formatAllEntries (batch AI)');
     // 1. 验证当前文件是.bib文件
     const editor = vscode.window.activeTextEditor;
     if (!editor || !editor.document.fileName.endsWith('.bib')) {
@@ -202,9 +670,14 @@ async function handleBatchFormat(): Promise<void> {
     if (!licenseStatus.isPro) {
         const action = await vscode.window.showWarningMessage(
             '批量格式化是 Pro 版功能，请升级以解锁',
+            '本地批量格式化（免费）',
             '了解 Pro 版',
             '取消'
         );
+        if (action === '本地批量格式化（免费）') {
+            await handleBatchFormatLocal();
+            return;
+        }
         if (action === '了解 Pro 版') {
             vscode.env.openExternal(vscode.Uri.parse('https://gumroad.com/l/reference-manager-pro'));
         }
@@ -234,12 +707,14 @@ async function handleBatchFormat(): Promise<void> {
         vscode.window.showInformationMessage('未找到任何 BibTeX 条目');
         return;
     }
+    logInfo(`formatAllEntries: entries=${entries.length}`);
 
     // 6. 批量格式化 (Req 10.5, 10.6)
     let successCount = 0;
     let failCount = 0;
     const failures: string[] = [];
-    let newContent = content;
+    const formattedByStartIndex = new Map<number, string>();
+    const localOptions = getConfig().localFormat;
 
     const cancelled = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -255,13 +730,16 @@ async function handleBatchFormat(): Promise<void> {
 
             try {
                 const formatted = await formatter!.formatBibEntry(entry.rawText);
-                newContent = newContent.replace(entry.rawText, formatted);
+                formattedByStartIndex.set(entry.startIndex, formatted);
                 successCount++;
             } catch (error) {
                 // 继续处理其他条目 (Req 10.8)
                 failCount++;
                 failures.push(entry.key);
                 console.warn(`格式化失败: ${entry.key}`, error);
+                logError(`formatAllEntries: failed entry=${entry.key}`, error);
+                // 失败回退到本地格式化，确保“一键跑通”
+                formattedByStartIndex.set(entry.startIndex, formatBibEntryLocalWithOptions(entry.rawText, localOptions));
             }
 
             // 500ms 延迟避免 rate limit (Req 10.6)
@@ -275,24 +753,72 @@ async function handleBatchFormat(): Promise<void> {
 
     if (cancelled) {
         vscode.window.showInformationMessage('批量格式化已取消');
+        logInfo('formatAllEntries: cancelled');
         return;
     }
 
     // 7. 应用更改
-    const fullRange = new vscode.Range(0, 0, editor.document.lineCount, 0);
-    await editor.edit(editBuilder => {
-        editBuilder.replace(fullRange, newContent);
+    const replacedContent = buildFormattedBibFileContent(content, entries, (entry) => {
+        return formattedByStartIndex.get(entry.startIndex) ?? formatBibEntryLocalWithOptions(entry.rawText, localOptions);
     });
+    const fullRange = new vscode.Range(0, 0, editor.document.lineCount, 0);
+    await applyEditorEditWithHistory(
+        editor,
+        `Format All Entries (AI): ${getShortFileName(editor.document.fileName)}`,
+        editBuilder => {
+            editBuilder.replace(fullRange, replacedContent);
+        },
+        { source: 'ai' }
+    );
 
     // 8. 显示结果 (Req 10.7, 10.8)
     if (failCount === 0) {
         vscode.window.showInformationMessage(`✅ Formatted ${successCount} entries`);
+        logInfo(`formatAllEntries: success entries=${successCount}`);
         await trackSuccessAndMaybeRequestRating();
     } else {
         vscode.window.showWarningMessage(
             `✅ Formatted ${successCount} entries, ❌ ${failCount} failed: ${failures.join(', ')}`
         );
+        logInfo(`formatAllEntries: partial success ok=${successCount} failed=${failCount}`);
     }
+}
+
+/**
+ * 批量本地格式化命令（免费、离线）
+ */
+async function handleBatchFormatLocal(): Promise<void> {
+    logInfo('Command: formatAllEntriesLocal');
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !editor.document.fileName.endsWith('.bib')) {
+        vscode.window.showWarningMessage('请先打开一个 .bib 文件');
+        return;
+    }
+
+    const content = editor.document.getText();
+    const result = parseBibFile(content);
+    const entries = result.entries;
+
+    if (entries.length === 0) {
+        vscode.window.showInformationMessage('未找到任何 BibTeX 条目');
+        return;
+    }
+
+    const localOptions = getConfig().localFormat;
+    const formatted = buildFormattedBibFileContent(content, entries, (entry) => formatBibEntryLocalWithOptions(entry.rawText, localOptions));
+    const fullRange = new vscode.Range(0, 0, editor.document.lineCount, 0);
+    await applyEditorEditWithHistory(
+        editor,
+        `Format All Entries (Local): ${getShortFileName(editor.document.fileName)}`,
+        editBuilder => {
+            editBuilder.replace(fullRange, formatted);
+        },
+        { source: 'local' }
+    );
+
+    vscode.window.showInformationMessage(`✅ 本地批量格式化完成：${entries.length} 个条目`);
+    logInfo(`formatAllEntriesLocal: success entries=${entries.length}`);
 }
 
 
@@ -362,7 +888,8 @@ async function deleteUnusedEntries(
     for (const [, entries] of entriesByFile) {
         const uri = entries[0]!.bibFile;
         const document = await vscode.workspace.openTextDocument(uri);
-        let content = document.getText();
+        const before = document.getText();
+        let content = before;
 
         // 按起始位置倒序排列，从后往前删除避免位置偏移
         const sortedEntries = [...entries].sort((a, b) => b.entry.startLine - a.entry.startLine);
@@ -380,6 +907,17 @@ async function deleteUnusedEntries(
         const edit = new vscode.WorkspaceEdit();
         edit.replace(uri, new vscode.Range(0, 0, document.lineCount, 0), content);
         await vscode.workspace.applyEdit(edit);
+        if (changeHistory && before !== content) {
+            changeHistory.add({
+                id: createChangeId(),
+                label: `Delete Unused Entries: ${getShortFileName(uri.fsPath)}`,
+                timestamp: new Date().toISOString(),
+                uri: uri.toString(),
+                before,
+                after: content,
+                source: 'system',
+            });
+        }
         await document.save();
     }
 
@@ -391,6 +929,7 @@ async function deleteUnusedEntries(
  * Requirements: 2.1, 2.2, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 7.3
  */
 async function handleFindUnused(): Promise<void> {
+    logInfo('Command: findUnusedCitations');
     // 1. 验证工作区存在
     if (!vscode.workspace.workspaceFolders) {
         vscode.window.showWarningMessage('请先打开一个工作区');
@@ -400,6 +939,14 @@ async function handleFindUnused(): Promise<void> {
     // 2. 检查使用限制 (Req 7.3)
     if (!await checkFindUnusedUsageLimit()) {
         await showUpgradePrompt('查找未使用引用');
+        return;
+    }
+
+    // 2.1 预检查 .tex 文件，避免空项目误报
+    const texFiles = await findTexFiles();
+    if (texFiles.length === 0) {
+        vscode.window.showWarningMessage('未找到任何 .tex 文件，无法检测未使用引用');
+        logInfo('findUnusedCitations: no .tex files');
         return;
     }
 
@@ -414,12 +961,8 @@ async function handleFindUnused(): Promise<void> {
     }, async (progress) => {
         // 2.1 扫描.tex文件获取使用的keys (Req 2.1, 2.2)
         progress.report({ message: '扫描 .tex 文件...' });
-        usedKeys = await scanWorkspaceForCitations(progress);
-
-        // 检查是否找到.tex文件 (Req 2.8)
-        if (usedKeys.size === 0) {
-            // 可能没有.tex文件或没有引用
-        }
+        usedKeys = await scanWorkspaceForCitations(progress, texFiles);
+        logInfo(`findUnusedCitations: used keys = ${usedKeys.size}`);
 
         // 2.2 查找.bib文件 (Req 2.9)
         progress.report({ message: '查找 .bib 文件...' });
@@ -427,6 +970,7 @@ async function handleFindUnused(): Promise<void> {
 
         if (bibFiles.length === 0) {
             vscode.window.showWarningMessage('未找到 .bib 文件');
+            logInfo('findUnusedCitations: no .bib files');
             return;
         }
 
@@ -444,6 +988,12 @@ async function handleFindUnused(): Promise<void> {
             }
         }
     });
+
+    if (usedKeys.size === 0) {
+        vscode.window.showInformationMessage('未在 .tex 文件中找到任何引用命令，已跳过未使用引用检测');
+        logInfo('findUnusedCitations: no citation commands found');
+        return;
+    }
 
     if (allEntries.length === 0) {
         vscode.window.showWarningMessage('未找到任何 BibTeX 条目');
@@ -550,9 +1100,14 @@ async function handleDuplicatesFound(
         0, 0,
         editor.document.lineCount, 0
     );
-    await editor.edit(editBuilder => {
-        editBuilder.replace(fullRange, content);
-    });
+    await applyEditorEditWithHistory(
+        editor,
+        `Remove Duplicates: ${getShortFileName(editor.document.fileName)}`,
+        editBuilder => {
+            editBuilder.replace(fullRange, content);
+        },
+        { source: 'system' }
+    );
 
     // 显示统计 (Req 3.10)
     vscode.window.showInformationMessage(`✅ Removed ${deletedCount} duplicate entries`);
@@ -563,6 +1118,9 @@ async function handleDuplicatesFound(
  * Requirements: 3.1, 3.2, 3.6, 3.7, 3.8, 3.9
  */
 async function handleRemoveDuplicates(): Promise<void> {
+    logInfo('Command: removeDuplicates');
+
+    try {
     // 1. 验证当前文件是.bib文件
     const editor = vscode.window.activeTextEditor;
     if (!editor || !editor.document.fileName.endsWith('.bib')) {
@@ -588,9 +1146,19 @@ async function handleRemoveDuplicates(): Promise<void> {
     const content = editor.document.getText();
     const result = parseBibFile(content);
     const entries = result.entries;
+    logInfo(`removeDuplicates: entries = ${entries.length}`);
 
     if (entries.length < 2) {
         vscode.window.showInformationMessage('✅ 条目数量不足，无需检测重复');
+        return;
+    }
+
+    if (entries.length > MAX_DUPLICATE_ENTRIES) {
+        vscode.window.showWarningMessage(
+            `当前文件包含 ${entries.length} 个条目，AI 去重最多支持 ${MAX_DUPLICATE_ENTRIES} 个。` +
+            '请拆分文件或先手动筛选后再运行此命令。'
+        );
+        logInfo('removeDuplicates: aborted due to MAX_DUPLICATE_ENTRIES');
         return;
     }
 
@@ -650,6 +1218,581 @@ async function handleRemoveDuplicates(): Promise<void> {
     } else {
         await handleDuplicatesFound(duplicates, editor);
     }
+    } catch (error) {
+        logError('removeDuplicates: failed', error);
+        vscode.window.showErrorMessage(`❌ 去重失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
+}
+
+async function handleSmartFix(): Promise<void> {
+    logInfo('Command: smartFix');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage('请先打开一个文件');
+        return;
+    }
+
+    const target = getEntryTextAndRange(editor);
+    if (!target) {
+        vscode.window.showWarningMessage('请将光标放在 BibTeX 条目内');
+        return;
+    }
+
+    const config = getConfig();
+    const localOptions = config.localFormat;
+    const strictness = config.validation.strictness;
+    const validationEnabled = config.validation.enabled;
+    const officialEnabled = config.officialMetadata.enabled;
+    const officialTimeout = config.officialMetadata.timeout;
+    const keyPolicy = config.officialMetadata.keyPolicy;
+    const sourceNotes: string[] = [];
+
+    const validateAndAnalyze = (text: string): { score: number | null; errorCount: number } => {
+        if (!validationEnabled) {
+            return { score: null, errorCount: 0 };
+        }
+        const parsed = parseBibFile(text);
+        const entry = parsed.entries[0];
+        if (!entry) {
+            return { score: null, errorCount: 0 };
+        }
+        const result = validateEntries([entry], strictness)[0];
+        if (!result || result.issues.length === 0) {
+            return { score: result ? result.score : null, errorCount: 0 };
+        }
+        const errorCount = result.issues.filter(i => i.severity === 'error').length;
+        return { score: result.score, errorCount };
+    };
+
+    const runLocal = async (reason?: string) => {
+        const formatted = formatBibEntryLocalWithOptions(target.text, localOptions);
+        const validation = validateAndAnalyze(formatted);
+        await applyEditorEditWithHistory(
+            editor,
+            `Smart Fix (Local): ${getShortFileName(editor.document.fileName)}`,
+            editBuilder => {
+                editBuilder.replace(target.range, formatted);
+            },
+            { source: 'local', confidence: validation.score }
+        );
+        vscode.window.showInformationMessage(reason ?? '✅ Smart Fix 完成（本地模式）');
+        if (validation.errorCount > 0) {
+            vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Validate References`);
+        }
+        renderSmartFixSummary(
+            getShortFileName(editor.document.fileName),
+            target.text,
+            formatted,
+            validation.score,
+            'local',
+            sourceNotes.length > 0 ? sourceNotes : undefined
+        );
+    };
+
+    if (officialEnabled) {
+        try {
+            const allEntries = parseBibFile(editor.document.getText()).entries;
+            const existingKeys = new Set(allEntries.map(entry => entry.key));
+            const official = await resolveOfficialBibtexFromEntry(target.text, officialTimeout);
+            if (official) {
+                const originalKey = extractEntryKey(target.text);
+                let officialText = official.bibtex;
+                const officialEntry = parseSingleEntry(officialText);
+                const notes: string[] = [];
+
+                let replacedKey = false;
+                if (officialEntry && originalKey) {
+                    const doiForKey = officialEntry.fields.doi ?? official.doi;
+                    const derivedKey = doiForKey ? deriveKeyFromDoi(doiForKey) : null;
+                    const officialKey = derivedKey ?? officialEntry.key;
+                    if (derivedKey && derivedKey !== officialEntry.key) {
+                        notes.push(`已使用 DOI 派生 key：${derivedKey}`);
+                    }
+
+                    if (officialKey !== originalKey) {
+                        const decision = await resolveKeyPolicyDecision(
+                            keyPolicy,
+                            originalKey,
+                            officialKey,
+                            existingKeys
+                        );
+                        if (!decision.useOfficial) {
+                            officialEntry.key = originalKey;
+                            notes.push(`已保留原引用 key（官方 key: ${officialKey}）`);
+                            if (decision.reason) {
+                                notes.push(`原因：${decision.reason}`);
+                            }
+                        } else {
+                            officialEntry.key = officialKey;
+                            replacedKey = true;
+                            if (decision.usedKeys?.has(originalKey)) {
+                                notes.push('已使用官方 key，请更新 .tex 中的旧 key');
+                            }
+                        }
+                    }
+                    officialText = serializeBibEntry(officialEntry, '  ');
+                }
+
+                const formatted = formatBibEntryLocalWithOptions(officialText, localOptions);
+                const finalText = replacedKey && originalKey
+                    ? appendKeyComment(formatted, originalKey)
+                    : formatted;
+                const validation = validateAndAnalyze(formatted);
+                await applyEditorEditWithHistory(
+                    editor,
+                    `Smart Fix (Official): ${getShortFileName(editor.document.fileName)}`,
+                    editBuilder => {
+                        editBuilder.replace(target.range, finalText);
+                    },
+                    { source: 'official', confidence: validation.score }
+                );
+                vscode.window.showInformationMessage('✅ Smart Fix 完成（官方元数据）');
+                if (validation.errorCount > 0) {
+                    vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Validate References`);
+                }
+                renderSmartFixSummary(
+                    getShortFileName(editor.document.fileName),
+                    target.text,
+                    finalText,
+                    validation.score,
+                    'official',
+                    notes
+                );
+                return;
+            }
+            const doi = extractDoiFromEntryText(target.text);
+            if (doi) {
+                sourceNotes.push('官方元数据获取失败，已使用本地/AI 修复');
+            }
+        } catch (error) {
+            logError('smartFix: official metadata lookup failed', error);
+            sourceNotes.push('官方元数据获取异常，已使用本地/AI 修复');
+        }
+    }
+
+    const hasApiKey = config.aiProvider === 'groq' ? !!config.groqApiKey : !!config.apiKey;
+    if (!hasApiKey) {
+        await runLocal('✅ Smart Fix 已完成（未启用智能增强）');
+        return;
+    }
+
+    if (!await checkFormatUsageLimit()) {
+        await runLocal('✅ Smart Fix 已完成（已达到智能增强上限）');
+        return;
+    }
+
+    if (!formatter) {
+        formatter = initFormatter();
+    }
+    if (!formatter) {
+        await runLocal('✅ Smart Fix 已完成（智能增强不可用）');
+        return;
+    }
+
+    try {
+        const formatted = await formatter.formatBibEntry(target.text);
+        const validation = validateAndAnalyze(formatted);
+        await applyEditorEditWithHistory(
+            editor,
+            `Smart Fix (AI): ${getShortFileName(editor.document.fileName)}`,
+            editBuilder => {
+                editBuilder.replace(target.range, formatted);
+            },
+            { source: 'ai', confidence: validation.score }
+        );
+        await incrementFormatUsage();
+        vscode.window.showInformationMessage('✅ Smart Fix 完成（智能增强）');
+        if (validation.errorCount > 0) {
+            vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Validate References`);
+        }
+        renderSmartFixSummary(
+            getShortFileName(editor.document.fileName),
+            target.text,
+            formatted,
+            validation.score,
+            'ai',
+            sourceNotes.length > 0 ? sourceNotes : undefined
+        );
+        await trackSuccessAndMaybeRequestRating();
+    } catch (error) {
+        logError('smartFix: failed, fallback to local', error);
+        await runLocal('✅ Smart Fix 已完成（已自动降级为本地修复）');
+    }
+}
+
+async function handleSmartFixAll(): Promise<void> {
+    logInfo('Command: smartFixAll');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !editor.document.fileName.endsWith('.bib')) {
+        vscode.window.showWarningMessage('请先打开一个 .bib 文件');
+        return;
+    }
+
+    const content = editor.document.getText();
+    const result = parseBibFile(content);
+    const entries = result.entries;
+    if (entries.length === 0) {
+        vscode.window.showInformationMessage('未找到任何 BibTeX 条目');
+        return;
+    }
+
+    // 检测重复条目（基于 DOI 和 key）
+    const doiToEntries = new Map<string, { key: string; index: number }[]>();
+    const keyToIndices = new Map<string, number[]>();
+    const duplicateDois: string[] = [];
+    const duplicateKeys: string[] = [];
+
+    for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i]!;
+        const parsed = parseSingleEntry(entry.rawText);
+
+        // 检测重复 key
+        const keyIndices = keyToIndices.get(entry.key) ?? [];
+        keyIndices.push(i);
+        keyToIndices.set(entry.key, keyIndices);
+        if (keyIndices.length === 2) {
+            duplicateKeys.push(entry.key);
+        }
+
+        // 检测重复 DOI
+        if (parsed?.fields.doi) {
+            const doi = parsed.fields.doi.toLowerCase().trim();
+            const doiEntries = doiToEntries.get(doi) ?? [];
+            doiEntries.push({ key: entry.key, index: i });
+            doiToEntries.set(doi, doiEntries);
+            if (doiEntries.length === 2) {
+                duplicateDois.push(doi);
+            }
+        }
+    }
+
+    // 显示重复警告
+    if (duplicateDois.length > 0 || duplicateKeys.length > 0) {
+        const channel = getOutputChannel();
+        channel.appendLine('');
+        channel.appendLine('⚠️ 检测到重复条目：');
+        channel.appendLine('─────────────────────────────────────');
+
+        if (duplicateKeys.length > 0) {
+            channel.appendLine(`\n🔑 重复的 key (${duplicateKeys.length} 个):`);
+            for (const key of duplicateKeys) {
+                const indices = keyToIndices.get(key)!;
+                channel.appendLine(`  • "${key}" 出现 ${indices.length} 次 (条目 #${indices.map(i => i + 1).join(', #')})`);
+            }
+        }
+
+        if (duplicateDois.length > 0) {
+            channel.appendLine(`\n📄 重复的 DOI (${duplicateDois.length} 个):`);
+            for (const doi of duplicateDois) {
+                const doiEntries = doiToEntries.get(doi)!;
+                channel.appendLine(`  • ${doi}`);
+                for (const e of doiEntries) {
+                    channel.appendLine(`    - key: "${e.key}" (条目 #${e.index + 1})`);
+                }
+            }
+        }
+
+        channel.appendLine('');
+        channel.appendLine('建议：手动删除重复条目后再运行 Smart Fix All');
+        channel.appendLine('─────────────────────────────────────');
+        channel.show(true);
+
+        const action = await vscode.window.showWarningMessage(
+            `检测到 ${duplicateKeys.length} 个重复 key 和 ${duplicateDois.length} 个重复 DOI，是否继续？`,
+            '继续修复', '取消'
+        );
+        if (action !== '继续修复') {
+            return;
+        }
+    }
+
+    const config = getConfig();
+    const localOptions = config.localFormat;
+    const officialEnabled = config.officialMetadata.enabled;
+    const officialTimeout = config.officialMetadata.timeout;
+    const keyPolicy = config.officialMetadata.keyPolicy;
+
+    let officialCount = 0;
+    let localCount = 0;
+    let failCount = 0;
+    let keyReplacedCount = 0;
+    let keyPreservedCount = 0;
+    let keyCollisionCount = 0;
+
+    const formattedByStartIndex = new Map<number, string>();
+    const usedKeys = keyPolicy !== 'preserve' && vscode.workspace.workspaceFolders
+        ? await scanWorkspaceForCitations()
+        : undefined;
+    const existingKeys = new Set(entries.map(entry => entry.key));
+
+    const cancelled = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: "Smart Fix All...",
+        cancellable: true
+    }, async (progress, token) => {
+        for (let i = 0; i < entries.length && !token.isCancellationRequested; i++) {
+            const entry = entries[i]!;
+            progress.report({
+                message: `Processing ${i + 1}/${entries.length}...`,
+                increment: 100 / entries.length
+            });
+
+            try {
+                let formatted: string | null = null;
+                let shouldAppendOldKeyComment = false;
+                
+                if (officialEnabled) {
+                    const official = await resolveOfficialBibtexFromEntry(entry.rawText, officialTimeout);
+                    if (official) {
+                        const officialEntry = parseSingleEntry(official.bibtex);
+                        if (officialEntry) {
+                            const doiForKey = officialEntry.fields.doi ?? official.doi;
+                            const derivedKey = doiForKey ? deriveKeyFromDoi(doiForKey) : null;
+                            const officialKey = derivedKey ?? officialEntry.key;
+                            if (officialKey !== entry.key) {
+                                let useOfficial = false;
+                                if (keyPolicy === 'officialAlways') {
+                                    useOfficial = true;
+                                } else if (keyPolicy === 'officialWhenUnused') {
+                                    useOfficial = usedKeys ? !usedKeys.has(entry.key) : false;
+                                }
+
+                                if (useOfficial && existingKeys.has(officialKey)) {
+                                    useOfficial = false;
+                                    keyCollisionCount++;
+                                }
+
+                                if (useOfficial) {
+                                    existingKeys.delete(entry.key);
+                                    existingKeys.add(officialKey);
+                                    officialEntry.key = officialKey;
+                                    shouldAppendOldKeyComment = true;
+                                    keyReplacedCount++;
+                                } else {
+                                    officialEntry.key = entry.key;
+                                    keyPreservedCount++;
+                                }
+                            } else {
+                                keyPreservedCount++;
+                            }
+                            formatted = serializeBibEntry(officialEntry, '  ');
+                        } else {
+                            formatted = official.bibtex;
+                        }
+                        formatted = formatBibEntryLocalWithOptions(formatted, localOptions);
+                        if (shouldAppendOldKeyComment) {
+                            formatted = appendKeyComment(formatted, entry.key);
+                        }
+                        officialCount++;
+                    }
+                }
+
+                // 如果官方元数据获取失败，尝试从本地DOI生成key
+                if (!formatted) {
+                    const parsedEntry = parseSingleEntry(entry.rawText);
+                    if (parsedEntry && parsedEntry.fields.doi) {
+                        const derivedKey = deriveKeyFromDoi(parsedEntry.fields.doi);
+                        if (derivedKey && derivedKey !== entry.key) {
+                            let useOfficial = false;
+                            if (keyPolicy === 'officialAlways') {
+                                useOfficial = true;
+                            } else if (keyPolicy === 'officialWhenUnused') {
+                                useOfficial = usedKeys ? !usedKeys.has(entry.key) : false;
+                            }
+
+                            if (useOfficial && existingKeys.has(derivedKey)) {
+                                useOfficial = false;
+                                keyCollisionCount++;
+                            }
+
+                            if (useOfficial) {
+                                existingKeys.delete(entry.key);
+                                existingKeys.add(derivedKey);
+                                parsedEntry.key = derivedKey;
+                                shouldAppendOldKeyComment = true;
+                                keyReplacedCount++;
+                            } else {
+                                keyPreservedCount++;
+                            }
+                            
+                            formatted = serializeBibEntry(parsedEntry, '  ');
+                            formatted = formatBibEntryLocalWithOptions(formatted, localOptions);
+                            if (shouldAppendOldKeyComment) {
+                                formatted = appendKeyComment(formatted, entry.key);
+                            }
+                        } else {
+                            formatted = formatBibEntryLocalWithOptions(entry.rawText, localOptions);
+                            keyPreservedCount++;
+                        }
+                    } else {
+                        formatted = formatBibEntryLocalWithOptions(entry.rawText, localOptions);
+                        keyPreservedCount++;
+                    }
+                    localCount++;
+                }
+
+                formattedByStartIndex.set(entry.startIndex, formatted);
+            } catch (error) {
+                failCount++;
+                formattedByStartIndex.set(entry.startIndex, entry.rawText);
+                logError(`smartFixAll: failed entry=${entry.key}`, error);
+            }
+        }
+
+        return token.isCancellationRequested;
+    });
+
+    if (cancelled) {
+        vscode.window.showInformationMessage('Smart Fix All 已取消');
+        logInfo('smartFixAll: cancelled');
+        return;
+    }
+
+    const replacedContent = buildFormattedBibFileContent(content, entries, (entry) => {
+        return formattedByStartIndex.get(entry.startIndex) ?? entry.rawText;
+    });
+    const fullRange = new vscode.Range(0, 0, editor.document.lineCount, 0);
+    await applyEditorEditWithHistory(
+        editor,
+        `Smart Fix All: ${getShortFileName(editor.document.fileName)}`,
+        editBuilder => {
+            editBuilder.replace(fullRange, replacedContent);
+        },
+        { source: officialCount > 0 ? 'official' : 'local' }
+    );
+
+    vscode.window.showInformationMessage(
+        `✅ Smart Fix All 完成：官方 ${officialCount}，本地 ${localCount}，失败 ${failCount}，key替换 ${keyReplacedCount}，保留 ${keyPreservedCount}` +
+        (keyCollisionCount > 0 ? `（冲突跳过 ${keyCollisionCount}）` : '')
+    );
+}
+
+function renderValidationResults(results: EntryValidationResult[]): void {
+    const channel = getOutputChannel();
+    channel.clear();
+    channel.show(true);
+
+    const allIssues = results.flatMap(r => r.issues);
+    const errorCount = allIssues.filter(i => i.severity === 'error').length;
+    const warnCount = allIssues.filter(i => i.severity === 'warn').length;
+    const infoCount = allIssues.filter(i => i.severity === 'info').length;
+    const visibleIssues = allIssues.filter(i => i.severity !== 'info');
+    const averageScore = results.length === 0
+        ? 100
+        : Math.round(results.reduce((sum, r) => sum + r.score, 0) / results.length);
+
+    channel.appendLine('═══════════════════════════════════════════════════════════');
+    channel.appendLine('  Reference Manager Pro - 参考文献质量校验');
+    channel.appendLine('═══════════════════════════════════════════════════════════');
+    channel.appendLine('');
+    channel.appendLine(`📊 统计: error ${errorCount}, warn ${warnCount}, info ${infoCount}`);
+    channel.appendLine(`🎯 平均可信度评分: ${averageScore}/100 (${getConfidenceLabel(averageScore)})`);
+    channel.appendLine('');
+
+    if (visibleIssues.length === 0) {
+        channel.appendLine('✅ 未发现明显问题');
+        vscode.window.showInformationMessage('✅ 未发现明显问题');
+        return;
+    }
+
+    for (const result of results) {
+        const issues = result.issues.filter(issue => issue.severity !== 'info');
+        if (issues.length === 0) {
+            continue;
+        }
+        channel.appendLine(`• ${result.key} (score ${result.score})`);
+        for (const issue of issues) {
+            channel.appendLine(`  - [${issue.severity}] ${issue.message}`);
+        }
+        channel.appendLine('');
+    }
+
+    if (errorCount > 0) {
+        channel.appendLine('👉 建议：先运行 Smart Fix，再运行 Validate References');
+        vscode.window.showWarningMessage('⚠️ 发现关键问题，建议先运行 Smart Fix');
+    }
+}
+
+async function handleValidateEntries(): Promise<void> {
+    logInfo('Command: validateEntries');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !editor.document.fileName.endsWith('.bib')) {
+        vscode.window.showWarningMessage('请先打开一个 .bib 文件');
+        return;
+    }
+
+    const config = getConfig();
+    if (!config.validation.enabled) {
+        vscode.window.showInformationMessage('当前已关闭参考文献校验，请在设置中开启');
+        return;
+    }
+
+    const content = editor.document.getText();
+    const result = parseBibFile(content);
+    if (result.entries.length === 0) {
+        vscode.window.showInformationMessage('未找到任何 BibTeX 条目');
+        return;
+    }
+
+    const results = validateEntries(result.entries, config.validation.strictness);
+    renderValidationResults(results);
+}
+
+async function handleShowHistory(): Promise<void> {
+    logInfo('Command: showHistory');
+    if (!changeHistory) {
+        vscode.window.showInformationMessage('暂无变更记录');
+        return;
+    }
+
+    const records = changeHistory.list();
+    if (records.length === 0) {
+        vscode.window.showInformationMessage('暂无变更记录');
+        return;
+    }
+
+    const items = records.map(record => {
+        const fileName = record.uri.split('/').pop() ?? record.uri;
+        const sourceLabel = formatSourceLabel(record.source);
+        const confidenceText = typeof record.confidence === 'number'
+            ? `${getConfidenceLabel(record.confidence)} ${record.confidence}/100`
+            : '可信度未知';
+        return {
+            label: record.label,
+            description: fileName,
+            detail: `${sourceLabel} • ${confidenceText} • ${new Date(record.timestamp).toLocaleString()}`,
+            record,
+        };
+    });
+
+    const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: '选择要回滚的变更记录',
+    });
+
+    if (!picked) {
+        return;
+    }
+
+    const fileName = picked.record.uri.split('/').pop() ?? picked.record.uri;
+    const confirmMessage =
+        `⚠️ 危险操作检测！\n` +
+        `操作类型：回滚文件内容\n` +
+        `影响范围：${fileName}\n` +
+        `风险评估：将覆盖当前内容\n\n` +
+        `请确认是否继续？[需要明确的"是"、"确认"、"继续"]`;
+
+    const action = await vscode.window.showWarningMessage(
+        confirmMessage,
+        { modal: true },
+        '确认'
+    );
+
+    if (action !== '确认') {
+        return;
+    }
+
+    await changeHistory.restore(picked.record);
+    vscode.window.showInformationMessage('✅ 已回滚到所选版本');
 }
 
 /**
@@ -657,12 +1800,14 @@ async function handleRemoveDuplicates(): Promise<void> {
  */
 export function activate(context: vscode.ExtensionContext): void {
     console.log('Reference Manager Pro is now active!');
+    logInfo('Extension activated');
 
     // 初始化 License 模块
     initLicenseModule(context);
 
     // 初始化formatter
     formatter = initFormatter();
+    changeHistory = new ChangeHistory(context);
 
     // 注册配置变化监听 (Req 4.7)
     const configDisposable = onConfigChange((config) => {
@@ -678,6 +1823,26 @@ export function activate(context: vscode.ExtensionContext): void {
     const formatCommand = vscode.commands.registerCommand(
         'referenceManager.formatEntry',
         handleFormatEntry
+    );
+
+    const smartFixCommand = vscode.commands.registerCommand(
+        'referenceManager.smartFix',
+        handleSmartFix
+    );
+
+    const smartFixAllCommand = vscode.commands.registerCommand(
+        'referenceManager.smartFixAll',
+        handleSmartFixAll
+    );
+
+    const validateEntriesCommand = vscode.commands.registerCommand(
+        'referenceManager.validateEntries',
+        handleValidateEntries
+    );
+
+    const showHistoryCommand = vscode.commands.registerCommand(
+        'referenceManager.showHistory',
+        handleShowHistory
     );
 
     const findUnusedCommand = vscode.commands.registerCommand(
@@ -713,33 +1878,44 @@ export function activate(context: vscode.ExtensionContext): void {
         handleBatchFormat
     );
 
+    // 注册本地批量格式化命令
+    const batchFormatLocalCommand = vscode.commands.registerCommand(
+        'referenceManager.formatAllEntriesLocal',
+        handleBatchFormatLocal
+    );
+
     context.subscriptions.push(
+        smartFixCommand,
+        smartFixAllCommand,
+        validateEntriesCommand,
+        showHistoryCommand,
         formatCommand,
         findUnusedCommand,
         removeDuplicatesCommand,
         activateLicenseCommand,
         viewLicenseStatusCommand,
         formatEntryLocalCommand,
-        batchFormatCommand
+        batchFormatCommand,
+        batchFormatLocalCommand
     );
 
     // 启动时检查配置 (Req 5.2)
     const config = getConfig();
+    logInfo(`Config: provider=${config.aiProvider}, hasApiKey=${config.aiProvider === 'groq' ? Boolean(config.groqApiKey) : Boolean(config.apiKey)}`);
     const hasValidApiKey = config.aiProvider === 'groq' 
         ? !!config.groqApiKey 
         : !!config.apiKey;
     
     if (!hasValidApiKey) {
-        const providerName = config.aiProvider === 'groq' ? 'Groq' : 'Anthropic';
         const settingKey = config.aiProvider === 'groq' 
             ? 'referenceManager.groqApiKey' 
             : 'referenceManager.apiKey';
         
         vscode.window.showInformationMessage(
-            `Reference Manager Pro: 请配置 ${providerName} API Key 以启用 AI 功能（本地格式化功能可直接使用）`,
-            '打开设置'
+            'Reference Manager Pro: 智能增强未启用，Smart Fix 将使用本地模式',
+            '启用智能增强'
         ).then(action => {
-            if (action === '打开设置') {
+            if (action === '启用智能增强') {
                 vscode.commands.executeCommand(
                     'workbench.action.openSettings',
                     settingKey

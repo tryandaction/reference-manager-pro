@@ -31,7 +31,37 @@ export interface ExtensionConfig {
     model: string;
     /** Groq 模型 */
     groqModel: string;
+    /** 本地格式化配置 */
+    localFormat: LocalFormatConfig;
+    /** 校验配置 */
+    validation: ValidationConfig;
+    /** 官方元数据配置 */
+    officialMetadata: OfficialMetadataConfig;
 }
+
+export interface LocalFormatConfig {
+    /** 是否将作者从 "First Last" 规范为 "Last, First" */
+    normalizeAuthors: boolean;
+    /** 标题中需要保护大小写的专有名词/缩写词（将用 {} 包裹） */
+    protectTitleWords: string[];
+    /** 期刊/会议全称到缩写的映射（本地规则） */
+    journalAbbreviations: Record<string, string>;
+}
+
+export type ValidationStrictness = 'loose' | 'normal' | 'strict';
+
+export interface ValidationConfig {
+    enabled: boolean;
+    strictness: ValidationStrictness;
+}
+
+export interface OfficialMetadataConfig {
+    enabled: boolean;
+    timeout: number;
+    keyPolicy: OfficialKeyPolicy;
+}
+
+export type OfficialKeyPolicy = 'preserve' | 'officialWhenUnused' | 'officialAlways';
 
 /**
  * 配置项的键名常量
@@ -54,6 +84,22 @@ export const CONFIG_KEYS = {
     MODEL: 'model',
     /** Groq 模型 */
     GROQ_MODEL: 'groqModel',
+    /** 本地格式化 - 作者规范化 */
+    LOCAL_FORMAT_NORMALIZE_AUTHORS: 'localFormat.normalizeAuthors',
+    /** 本地格式化 - 标题保护词 */
+    LOCAL_FORMAT_PROTECT_TITLE_WORDS: 'localFormat.protectTitleWords',
+    /** 本地格式化 - 期刊缩写映射 */
+    LOCAL_FORMAT_JOURNAL_ABBREVIATIONS: 'localFormat.journalAbbreviations',
+    /** 校验 - 启用 */
+    VALIDATION_ENABLED: 'validation.enabled',
+    /** 校验 - 严格度 */
+    VALIDATION_STRICTNESS: 'validation.strictness',
+    /** 官方元数据 - 启用 */
+    OFFICIAL_METADATA_ENABLED: 'officialMetadata.enabled',
+    /** 官方元数据 - 超时 */
+    OFFICIAL_METADATA_TIMEOUT: 'officialMetadata.timeout',
+    /** 官方元数据 - key 策略 */
+    OFFICIAL_METADATA_KEY_POLICY: 'officialMetadata.keyPolicy',
 } as const;
 
 /**
@@ -68,6 +114,56 @@ export const DEFAULT_CONFIG: ExtensionConfig = {
     timeout: 30000,
     model: 'claude-sonnet-4-20250514',
     groqModel: 'llama-3.3-70b-versatile',
+    localFormat: {
+        normalizeAuthors: true,
+        protectTitleWords: ['LaTeX', 'BibTeX', 'arXiv', 'GitHub', 'OpenAI', 'GPU', 'CPU', 'AI', 'DOI', 'NOON', 'Hong-Ou-Mandel', 'Rydberg', 'CP', 'PT'],
+        journalAbbreviations: {
+            // Physics - General
+            'Physical Review Letters': 'Phys. Rev. Lett.',
+            'Physical Review A': 'Phys. Rev. A',
+            'Physical Review B': 'Phys. Rev. B',
+            'Physical Review D': 'Phys. Rev. D',
+            'Physical Review Applied': 'Phys. Rev. Appl.',
+            'Reviews of Modern Physics': 'Rev. Mod. Phys.',
+            'PRX Quantum': 'PRX Quantum',
+            // Nature series
+            'Nature': 'Nature',
+            'Nature Physics': 'Nat. Phys.',
+            'Nature Photonics': 'Nat. Photonics',
+            'Nature Communications': 'Nat. Commun.',
+            // Science series
+            'Science': 'Science',
+            'Scientific Reports': 'Sci. Rep.',
+            // Optics
+            'Optica': 'Optica',
+            'Optics Express': 'Opt. Express',
+            // Quantum
+            'Quantum Science and Technology': 'Quantum Sci. Technol.',
+            'New Journal of Physics': 'New J. Phys.',
+            // Materials
+            'Nano Letters': 'Nano Lett.',
+            'Applied Physics Letters': 'Appl. Phys. Lett.',
+            'Applied Physics Reviews': 'Appl. Phys. Rev.',
+            // Nuclear
+            'Nuclear Physics B': 'Nucl. Phys. B',
+            'Physics Letters B': 'Phys. Lett. B',
+            'Soviet Journal of Nuclear Physics': 'Sov. J. Nucl. Phys.',
+            // Engineering
+            'Review of Scientific Instruments': 'Rev. Sci. Instrum.',
+            'Opto-Electronics Review': 'Opto-Electron. Rev.',
+            // Journals (full name variants)
+            'Journal of Optics B: Quantum and Semiclassical Optics': 'J. Opt. B: Quantum Semiclass. Opt.',
+        }
+    },
+    validation: {
+        enabled: true,
+        strictness: 'normal',
+    },
+    officialMetadata: {
+        enabled: true,
+        timeout: 8000,
+        keyPolicy: 'officialAlways',
+    },
 };
 
 /**
@@ -93,6 +189,44 @@ export function getConfig(): ExtensionConfig {
         timeout: config.get<number>(CONFIG_KEYS.TIMEOUT, DEFAULT_CONFIG.timeout),
         model: config.get<string>(CONFIG_KEYS.MODEL, DEFAULT_CONFIG.model),
         groqModel: config.get<string>(CONFIG_KEYS.GROQ_MODEL, DEFAULT_CONFIG.groqModel),
+        localFormat: {
+            normalizeAuthors: config.get<boolean>(
+                CONFIG_KEYS.LOCAL_FORMAT_NORMALIZE_AUTHORS,
+                DEFAULT_CONFIG.localFormat.normalizeAuthors
+            ),
+            protectTitleWords: config.get<string[]>(
+                CONFIG_KEYS.LOCAL_FORMAT_PROTECT_TITLE_WORDS,
+                DEFAULT_CONFIG.localFormat.protectTitleWords
+            ),
+            journalAbbreviations: config.get<Record<string, string>>(
+                CONFIG_KEYS.LOCAL_FORMAT_JOURNAL_ABBREVIATIONS,
+                DEFAULT_CONFIG.localFormat.journalAbbreviations
+            ),
+        },
+        validation: {
+            enabled: config.get<boolean>(
+                CONFIG_KEYS.VALIDATION_ENABLED,
+                DEFAULT_CONFIG.validation.enabled
+            ),
+            strictness: config.get<ValidationStrictness>(
+                CONFIG_KEYS.VALIDATION_STRICTNESS,
+                DEFAULT_CONFIG.validation.strictness
+            ),
+        },
+        officialMetadata: {
+            enabled: config.get<boolean>(
+                CONFIG_KEYS.OFFICIAL_METADATA_ENABLED,
+                DEFAULT_CONFIG.officialMetadata.enabled
+            ),
+            timeout: config.get<number>(
+                CONFIG_KEYS.OFFICIAL_METADATA_TIMEOUT,
+                DEFAULT_CONFIG.officialMetadata.timeout
+            ),
+            keyPolicy: config.get<OfficialKeyPolicy>(
+                CONFIG_KEYS.OFFICIAL_METADATA_KEY_POLICY,
+                DEFAULT_CONFIG.officialMetadata.keyPolicy
+            ),
+        },
     };
 }
 
