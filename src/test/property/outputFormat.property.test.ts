@@ -95,6 +95,8 @@ describe('Output Format Properties', () => {
                             title: longTitle
                         },
                         rawText: '',
+                        startIndex: 0,
+                        endIndex: 0,
                         startLine: 0,
                         endLine: 0
                     };
@@ -135,6 +137,8 @@ describe('Output Format Properties', () => {
                             title: shortTitle
                         },
                         rawText: '',
+                        startIndex: 0,
+                        endIndex: 0,
                         startLine: 0,
                         endLine: 0
                     };
@@ -184,6 +188,8 @@ describe('Output Format Properties', () => {
                         key,
                         fields,
                         rawText: '',
+                        startIndex: 0,
+                        endIndex: 0,
                         startLine: 0,
                         endLine: 0
                     };

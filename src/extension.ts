@@ -9,11 +9,10 @@ import * as vscode from 'vscode';
 import { AIFormatter, AIError } from './aiFormatter';
 import { parseBibFile, parseSingleEntry, serializeBibEntry, BibEntry, getEntryDescription } from './bibParser';
 import { scanWorkspaceForCitations, findBibFiles, findTexFiles } from './citationScanner';
-import { getConfig, ensureConfigured, onConfigChange } from './config';
+import { getConfig, ensureConfigured, onConfigChange, OfficialKeyPolicy, OfficialFormatMode } from './config';
 import { ChangeHistory } from './changeHistory';
 import { validateEntries, EntryValidationResult } from './metadataValidator';
 import { resolveOfficialBibtexFromEntry, extractDoiFromEntryText } from './metadataResolver';
-import { OfficialKeyPolicy } from './config';
 import {
     initLicenseModule,
     checkFormatUsageLimit,
@@ -269,6 +268,88 @@ function appendKeyComment(entryText: string, oldKey: string): string {
         return entryText;
     }
     lines[0] = `${firstLine} % oldkey: ${oldKey}`;
+    return lines.join('\n');
+}
+
+function replaceEntryKeyRaw(entryText: string, newKey: string): string {
+    const entryStart = /^(\s*@\w+\s*\{)\s*[^,\s]+(\s*,)/m;
+    if (!entryStart.test(entryText)) {
+        return entryText;
+    }
+    return entryText.replace(entryStart, `$1${newKey}$2`);
+}
+
+function escapeMarkdownCell(value: string): string {
+    return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+}
+
+function truncateText(value: string, maxLength: number): string {
+    if (value.length <= maxLength) {
+        return value;
+    }
+    if (maxLength <= 3) {
+        return value.slice(0, maxLength);
+    }
+    return value.slice(0, maxLength - 3) + '...';
+}
+
+interface OfficialReportRow {
+    index: number;
+    key: string;
+    title: string;
+    doi: string;
+    status: 'OK' | 'NO_DOI' | 'FAILED' | 'SKIPPED';
+    note: string;
+}
+
+function buildOfficialReportMarkdown(
+    fileName: string,
+    rows: OfficialReportRow[],
+    summary: { total: number; ok: number; noDoi: number; failed: number; skipped: number },
+    options: { timeoutMs: number; formatMode: OfficialFormatMode; officialEnabled: boolean }
+): string {
+    const lines: string[] = [];
+    const now = new Date().toISOString();
+
+    lines.push('# Official Metadata Report');
+    lines.push('');
+    lines.push(`- File: ${fileName}`);
+    lines.push(`- Generated: ${now}`);
+    lines.push(`- Timeout: ${options.timeoutMs} ms`);
+    lines.push(`- Official format mode: ${options.formatMode}`);
+    lines.push(`- officialMetadata.enabled: ${options.officialEnabled}`);
+    lines.push('');
+
+    lines.push('## Summary');
+    lines.push('');
+    lines.push('| Total | Official OK | No DOI | Failed | Skipped |');
+    lines.push('|---:|---:|---:|---:|---:|');
+    lines.push(`| ${summary.total} | ${summary.ok} | ${summary.noDoi} | ${summary.failed} | ${summary.skipped} |`);
+    lines.push('');
+
+    lines.push('## Entries');
+    lines.push('');
+    lines.push('| # | Key | Title | DOI | Official | Note |');
+    lines.push('|---:|---|---|---|---|---|');
+
+    const maxTitle = 80;
+    for (const row of rows) {
+        const title = escapeMarkdownCell(truncateText(row.title, maxTitle));
+        const key = escapeMarkdownCell(row.key);
+        const doi = escapeMarkdownCell(row.doi);
+        const note = escapeMarkdownCell(row.note);
+        lines.push(`| ${row.index} | ${key} | ${title} | ${doi} | ${row.status} | ${note} |`);
+    }
+
+    lines.push('');
+    lines.push('## Notes');
+    lines.push('');
+    lines.push('- `OK`: 官方 DOI 入口返回了 BibTeX');
+    lines.push('- `NO_DOI`: 条目中未识别到 DOI');
+    lines.push('- `FAILED`: DOI 存在但官方获取失败（可能是网络、超时、DOI 无效或出版商限制）');
+    lines.push('- `SKIPPED`: 处理中断或被取消');
+    lines.push('');
+
     return lines.join('\n');
 }
 
@@ -1224,7 +1305,7 @@ async function handleRemoveDuplicates(): Promise<void> {
     }
 }
 
-async function handleSmartFix(): Promise<void> {
+async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode } = {}): Promise<void> {
     logInfo('Command: smartFix');
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -1245,6 +1326,7 @@ async function handleSmartFix(): Promise<void> {
     const officialEnabled = config.officialMetadata.enabled;
     const officialTimeout = config.officialMetadata.timeout;
     const keyPolicy = config.officialMetadata.keyPolicy;
+    const officialFormatMode = options.officialFormatMode ?? config.officialMetadata.formatMode;
     const sourceNotes: string[] = [];
 
     const validateAndAnalyze = (text: string): { score: number | null; errorCount: number } => {
@@ -1309,6 +1391,7 @@ async function handleSmartFix(): Promise<void> {
                         notes.push(`已使用 DOI 派生 key：${derivedKey}`);
                     }
 
+                    let targetKey = officialEntry.key;
                     if (officialKey !== originalKey) {
                         const decision = await resolveKeyPolicyDecision(
                             keyPolicy,
@@ -1317,27 +1400,43 @@ async function handleSmartFix(): Promise<void> {
                             existingKeys
                         );
                         if (!decision.useOfficial) {
-                            officialEntry.key = originalKey;
+                            targetKey = originalKey;
                             notes.push(`已保留原引用 key（官方 key: ${officialKey}）`);
                             if (decision.reason) {
                                 notes.push(`原因：${decision.reason}`);
                             }
                         } else {
-                            officialEntry.key = officialKey;
+                            targetKey = officialKey;
                             replacedKey = true;
                             if (decision.usedKeys?.has(originalKey)) {
                                 notes.push('已使用官方 key，请更新 .tex 中的旧 key');
                             }
                         }
                     }
+
+                    if (officialFormatMode === 'raw') {
+                        if (targetKey !== officialEntry.key) {
+                            officialText = replaceEntryKeyRaw(officialText, targetKey);
+                        }
+                        notes.push('输出为官方原始格式（未做本地规范化）');
+                    } else {
+                        officialEntry.key = targetKey;
+                        officialText = serializeBibEntry(officialEntry, '  ');
+                    }
+                } else if (officialEntry && officialFormatMode !== 'raw') {
                     officialText = serializeBibEntry(officialEntry, '  ');
                 }
 
-                const formatted = formatBibEntryLocalWithOptions(officialText, localOptions);
-                const finalText = replacedKey && originalKey
-                    ? appendKeyComment(formatted, originalKey)
-                    : formatted;
-                const validation = validateAndAnalyze(formatted);
+                let finalText = officialText;
+                if (officialFormatMode === 'normalized') {
+                    const formatted = formatBibEntryLocalWithOptions(officialText, localOptions);
+                    finalText = replacedKey && originalKey
+                        ? appendKeyComment(formatted, originalKey)
+                        : formatted;
+                } else if (replacedKey && originalKey) {
+                    finalText = appendKeyComment(officialText, originalKey);
+                }
+                const validation = validateAndAnalyze(finalText);
                 await applyEditorEditWithHistory(
                     editor,
                     `Smart Fix (Official): ${getShortFileName(editor.document.fileName)}`,
@@ -1346,7 +1445,8 @@ async function handleSmartFix(): Promise<void> {
                     },
                     { source: 'official', confidence: validation.score }
                 );
-                vscode.window.showInformationMessage('✅ Smart Fix 完成（官方元数据）');
+                const modeLabel = officialFormatMode === 'raw' ? '官方元数据·原始' : '官方元数据';
+                vscode.window.showInformationMessage(`✅ Smart Fix 完成（${modeLabel}）`);
                 if (validation.errorCount > 0) {
                     vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Validate References`);
                 }
@@ -1420,7 +1520,7 @@ async function handleSmartFix(): Promise<void> {
     }
 }
 
-async function handleSmartFixAll(): Promise<void> {
+async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatMode } = {}): Promise<void> {
     logInfo('Command: smartFixAll');
     const editor = vscode.window.activeTextEditor;
     if (!editor || !editor.document.fileName.endsWith('.bib')) {
@@ -1511,6 +1611,7 @@ async function handleSmartFixAll(): Promise<void> {
     const officialEnabled = config.officialMetadata.enabled;
     const officialTimeout = config.officialMetadata.timeout;
     const keyPolicy = config.officialMetadata.keyPolicy;
+    const officialFormatMode = options.officialFormatMode ?? config.officialMetadata.formatMode;
 
     let officialCount = 0;
     let localCount = 0;
@@ -1544,7 +1645,8 @@ async function handleSmartFixAll(): Promise<void> {
                 if (officialEnabled) {
                     const official = await resolveOfficialBibtexFromEntry(entry.rawText, officialTimeout);
                     if (official) {
-                        const officialEntry = parseSingleEntry(official.bibtex);
+                        let officialText = official.bibtex;
+                        const officialEntry = parseSingleEntry(officialText);
                         if (officialEntry) {
                             const doiForKey = officialEntry.fields.doi ?? official.doi;
                             const derivedKey = doiForKey ? deriveKeyFromDoi(doiForKey) : null;
@@ -1565,23 +1667,44 @@ async function handleSmartFixAll(): Promise<void> {
                                 if (useOfficial) {
                                     existingKeys.delete(entry.key);
                                     existingKeys.add(officialKey);
-                                    officialEntry.key = officialKey;
+                                    if (officialFormatMode === 'raw') {
+                                        officialText = replaceEntryKeyRaw(officialText, officialKey);
+                                    } else {
+                                        officialEntry.key = officialKey;
+                                        officialText = serializeBibEntry(officialEntry, '  ');
+                                    }
                                     shouldAppendOldKeyComment = true;
                                     keyReplacedCount++;
                                 } else {
-                                    officialEntry.key = entry.key;
+                                    if (officialFormatMode === 'raw') {
+                                        if (entry.key !== officialEntry.key) {
+                                            officialText = replaceEntryKeyRaw(officialText, entry.key);
+                                        }
+                                    } else {
+                                        officialEntry.key = entry.key;
+                                        officialText = serializeBibEntry(officialEntry, '  ');
+                                    }
                                     keyPreservedCount++;
                                 }
                             } else {
                                 keyPreservedCount++;
+                                if (officialFormatMode !== 'raw') {
+                                    officialText = serializeBibEntry(officialEntry, '  ');
+                                }
                             }
-                            formatted = serializeBibEntry(officialEntry, '  ');
-                        } else {
-                            formatted = official.bibtex;
+                        } else if (officialFormatMode !== 'raw') {
+                            officialText = official.bibtex;
                         }
-                        formatted = formatBibEntryLocalWithOptions(formatted, localOptions);
-                        if (shouldAppendOldKeyComment) {
-                            formatted = appendKeyComment(formatted, entry.key);
+
+                        if (officialFormatMode === 'normalized') {
+                            formatted = formatBibEntryLocalWithOptions(officialText, localOptions);
+                            if (shouldAppendOldKeyComment) {
+                                formatted = appendKeyComment(formatted, entry.key);
+                            }
+                        } else {
+                            formatted = shouldAppendOldKeyComment
+                                ? appendKeyComment(officialText, entry.key)
+                                : officialText;
                         }
                         officialCount++;
                     }
@@ -1661,9 +1784,149 @@ async function handleSmartFixAll(): Promise<void> {
         { source: officialCount > 0 ? 'official' : 'local' }
     );
 
+    const modeLabel = officialFormatMode === 'raw' ? '官方原始' : '官方+本地规范化';
     vscode.window.showInformationMessage(
-        `✅ Smart Fix All 完成：官方 ${officialCount}，本地 ${localCount}，失败 ${failCount}，key替换 ${keyReplacedCount}，保留 ${keyPreservedCount}` +
+        `✅ Smart Fix All 完成（${modeLabel}）：官方 ${officialCount}，本地 ${localCount}，失败 ${failCount}，key替换 ${keyReplacedCount}，保留 ${keyPreservedCount}` +
         (keyCollisionCount > 0 ? `（冲突跳过 ${keyCollisionCount}）` : '')
+    );
+}
+
+async function handleOfficialReport(): Promise<void> {
+    logInfo('Command: officialReport');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !editor.document.fileName.endsWith('.bib')) {
+        vscode.window.showWarningMessage('请先打开一个 .bib 文件');
+        return;
+    }
+
+    const content = editor.document.getText();
+    const parsed = parseBibFile(content);
+    const entries = parsed.entries;
+    if (entries.length === 0) {
+        vscode.window.showInformationMessage('未找到任何 BibTeX 条目');
+        return;
+    }
+
+    const config = getConfig();
+    const timeoutMs = config.officialMetadata.timeout;
+    const formatMode = config.officialMetadata.formatMode;
+    const officialEnabled = config.officialMetadata.enabled;
+
+    const rows: OfficialReportRow[] = [];
+    let ok = 0;
+    let noDoi = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    const doiCache = new Map<string, boolean>();
+    let cancelledAt: number | null = null;
+
+    const cancelled = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Official Metadata Report...',
+        cancellable: true
+    }, async (progress, token) => {
+        for (let i = 0; i < entries.length; i++) {
+            if (token.isCancellationRequested) {
+                cancelledAt = i;
+                break;
+            }
+
+            const entry = entries[i]!;
+            progress.report({
+                message: `Checking ${i + 1}/${entries.length}...`,
+                increment: 100 / entries.length
+            });
+
+            const title = entry.fields.title ?? 'Untitled';
+            const doi = extractDoiFromEntryText(entry.rawText);
+            if (!doi) {
+                rows.push({
+                    index: i + 1,
+                    key: entry.key,
+                    title,
+                    doi: '',
+                    status: 'NO_DOI',
+                    note: '缺少 DOI'
+                });
+                noDoi++;
+                continue;
+            }
+
+            let okFlag: boolean;
+            if (doiCache.has(doi)) {
+                okFlag = doiCache.get(doi)!;
+            } else {
+                const official = await resolveOfficialBibtexFromEntry(entry.rawText, timeoutMs);
+                okFlag = Boolean(official);
+                doiCache.set(doi, okFlag);
+            }
+
+            if (okFlag) {
+                rows.push({
+                    index: i + 1,
+                    key: entry.key,
+                    title,
+                    doi,
+                    status: 'OK',
+                    note: '官方可获取'
+                });
+                ok++;
+            } else {
+                rows.push({
+                    index: i + 1,
+                    key: entry.key,
+                    title,
+                    doi,
+                    status: 'FAILED',
+                    note: '官方获取失败'
+                });
+                failed++;
+            }
+        }
+
+        return token.isCancellationRequested;
+    });
+
+    if (cancelled && cancelledAt !== null) {
+        for (let i = cancelledAt; i < entries.length; i++) {
+            const entry = entries[i]!;
+            rows.push({
+                index: i + 1,
+                key: entry.key,
+                title: entry.fields.title ?? 'Untitled',
+                doi: extractDoiFromEntryText(entry.rawText) ?? '',
+                status: 'SKIPPED',
+                note: '用户取消'
+            });
+            skipped++;
+        }
+    }
+
+    const summary = {
+        total: entries.length,
+        ok,
+        noDoi,
+        failed,
+        skipped
+    };
+
+    const report = buildOfficialReportMarkdown(
+        getShortFileName(editor.document.fileName),
+        rows,
+        summary,
+        { timeoutMs, formatMode, officialEnabled }
+    );
+
+    const doc = await vscode.workspace.openTextDocument({
+        language: 'markdown',
+        content: report
+    });
+    await vscode.window.showTextDocument(doc, { preview: false });
+
+    vscode.window.showInformationMessage(
+        `✅ 官方元数据报告已生成：OK ${ok}，无 DOI ${noDoi}，失败 ${failed}` +
+        (skipped > 0 ? `，跳过 ${skipped}` : '')
     );
 }
 
@@ -1830,9 +2093,24 @@ export function activate(context: vscode.ExtensionContext): void {
         handleSmartFix
     );
 
+    const smartFixOfficialRawCommand = vscode.commands.registerCommand(
+        'referenceManager.smartFixOfficialRaw',
+        () => handleSmartFix({ officialFormatMode: 'raw' })
+    );
+
     const smartFixAllCommand = vscode.commands.registerCommand(
         'referenceManager.smartFixAll',
         handleSmartFixAll
+    );
+
+    const smartFixAllOfficialRawCommand = vscode.commands.registerCommand(
+        'referenceManager.smartFixAllOfficialRaw',
+        () => handleSmartFixAll({ officialFormatMode: 'raw' })
+    );
+
+    const officialReportCommand = vscode.commands.registerCommand(
+        'referenceManager.officialReport',
+        handleOfficialReport
     );
 
     const validateEntriesCommand = vscode.commands.registerCommand(
@@ -1886,7 +2164,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
         smartFixCommand,
+        smartFixOfficialRawCommand,
         smartFixAllCommand,
+        smartFixAllOfficialRawCommand,
+        officialReportCommand,
         validateEntriesCommand,
         showHistoryCommand,
         formatCommand,

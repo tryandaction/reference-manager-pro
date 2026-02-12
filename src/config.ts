@@ -60,9 +60,11 @@ export interface OfficialMetadataConfig {
     enabled: boolean;
     timeout: number;
     keyPolicy: OfficialKeyPolicy;
+    formatMode: OfficialFormatMode;
 }
 
 export type OfficialKeyPolicy = 'preserve' | 'officialWhenUnused' | 'officialAlways';
+export type OfficialFormatMode = 'raw' | 'normalized';
 
 /**
  * 配置项的键名常量
@@ -101,6 +103,8 @@ export const CONFIG_KEYS = {
     OFFICIAL_METADATA_TIMEOUT: 'officialMetadata.timeout',
     /** 官方元数据 - key 策略 */
     OFFICIAL_METADATA_KEY_POLICY: 'officialMetadata.keyPolicy',
+    /** 官方元数据 - 格式模式 */
+    OFFICIAL_METADATA_FORMAT_MODE: 'officialMetadata.formatMode',
 } as const;
 
 /**
@@ -128,6 +132,7 @@ export const DEFAULT_CONFIG: ExtensionConfig = {
         enabled: true,
         timeout: 8000,
         keyPolicy: 'officialAlways',
+        formatMode: 'normalized',
     },
 };
 
@@ -190,6 +195,10 @@ export function getConfig(): ExtensionConfig {
             keyPolicy: config.get<OfficialKeyPolicy>(
                 CONFIG_KEYS.OFFICIAL_METADATA_KEY_POLICY,
                 DEFAULT_CONFIG.officialMetadata.keyPolicy
+            ),
+            formatMode: config.get<OfficialFormatMode>(
+                CONFIG_KEYS.OFFICIAL_METADATA_FORMAT_MODE,
+                DEFAULT_CONFIG.officialMetadata.formatMode
             ),
         },
     };

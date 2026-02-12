@@ -18,7 +18,7 @@ describe('Local Formatter', () => {
             const result = formatBibEntryLocal(input);
 
             expect(result).toContain('@article{key2023,');
-            expect(result).toContain('author = {John Doe}');
+            expect(result).toContain('author = {Doe, John}');
             expect(result).toContain('title = {Test Title}');
             expect(result).toContain('year = {2023}');
         });
@@ -49,7 +49,8 @@ describe('Local Formatter', () => {
 }`;
             const result = formatBibEntryLocal(input);
 
-            expect(result).toContain('author = {John Doe}');
+            expect(result).toContain('author = {Doe, John}');
+            expect(result).toContain('year = {2023}');
             // titlee is not a known typo, so it stays as is
             // autor -> author, yer -> year
             expect(result).not.toContain('autor');
@@ -64,7 +65,7 @@ describe('Local Formatter', () => {
             const result = formatBibEntryLocal(input);
 
             expect(result).toContain('title = {Test Title with spaces}');
-            expect(result).toContain('author = {John Doe}');
+            expect(result).toContain('author = {Doe, John}');
         });
 
         it('should handle entries with double quotes', () => {
@@ -75,7 +76,37 @@ describe('Local Formatter', () => {
             const result = formatBibEntryLocal(input);
 
             expect(result).toContain('title = {Test Title}');
-            expect(result).toContain('author = {John Doe}');
+            expect(result).toContain('author = {Doe, John}');
+        });
+
+        it('should normalize BibLaTeX-style name-value authors and field aliases', () => {
+            const input = `@article{key2015,
+  author = {family=Bibber, given=K., prefix=van, useprefix=false and Doe, John},
+  title = {Cavity Design for High-Frequency Axion Dark Matter Detectors},
+  journaltitle = {Review of Scientific Instruments},
+  date = {2015-12-01},
+  issue = {12},
+  pages = {123-130}
+}`;
+            const result = formatBibEntryLocal(input);
+
+            expect(result).toContain('author = {van Bibber, K. and Doe, John}');
+            expect(result).toContain('journal = {Rev. Sci. Instrum.}');  // ✅ 修正：期刊名会被缩写
+            expect(result).toContain('year = {2015}');
+            expect(result).toContain('month = {12}');
+            expect(result).toContain('number = {12}');
+            expect(result).toContain('pages = {123--130}');
+        });
+
+        it('should not double-expand page ranges already normalized', () => {
+            const input = `@article{key2023,
+  title={Test Title},
+  author={John Doe},
+  pages={123--130}
+}`;
+            const result = formatBibEntryLocal(input);
+
+            expect(result).toContain('pages = {123--130}');
         });
 
         it('should return original if cannot parse', () => {
@@ -83,6 +114,40 @@ describe('Local Formatter', () => {
             const result = formatBibEntryLocal(input);
 
             expect(result).toBe(input);
+        });
+
+        it('should format multiple entries without dropping content', () => {
+            const input = `@article{key2023,
+  title={Test Title},
+  author={John Doe},
+  year={2023}
+}@article{key2024,
+  title={Another Title},
+  author={Jane Doe},
+  year={2024}
+}`;
+            const result = formatBibEntryLocal(input);
+
+            expect(result.match(/@article\{/g)?.length).toBe(2);
+            expect(result).toContain('@article{key2023,');
+            expect(result).toContain('@article{key2024,');
+            expect(result).toContain('author = {Doe, John}');
+            expect(result).toContain('author = {Doe, Jane}');
+        });
+
+        it('should preserve non-entry text when formatting', () => {
+            const input = `% Comment before
+@article{key2023,
+  title={Test Title},
+  author={John Doe},
+  year={2023}
+}
+% Comment after`;
+            const result = formatBibEntryLocal(input);
+
+            expect(result).toContain('% Comment before');
+            expect(result).toContain('% Comment after');
+            expect(result).toContain('author = {Doe, John}');
         });
 
         it('should handle nested braces in values', () => {

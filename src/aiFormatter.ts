@@ -13,6 +13,11 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { ExtensionConfig } from './config';
+import { formatBibEntryLocalWithOptions } from './localFormatter';
+import { ensureFetchSupport } from './fetchPolyfill';
+
+// 确保在旧版 Node 环境中也有 fetch/AbortController
+ensureFetchSupport();
 
 /**
  * 重复检测结果接口
@@ -68,18 +73,16 @@ export class AIError extends Error {
 /**
  * 格式化BibTeX条目的Prompt模板
  */
-const FORMAT_PROMPT = `规范化以下BibTeX条目，要求：
-1. 期刊名使用标准缩写（如Physical Review Letters → Phys. Rev. Lett.，Nature Communications → Nat. Commun.）
-2. 如果能根据标题和作者推断DOI，请补全（格式：10.xxxx/xxxxx）
-3. 作者格式统一为"Last, First and Last, First"格式
-4. 删除多余空格和换行，保持格式整洁
-5. 年份使用4位数字格式
-6. 页码使用连字符（如123--456）
+const FORMAT_PROMPT = `请将以下 BibTeX 条目规范化为期刊/会议论文的专业格式，输出要求：
+1) 使用标准字段和顺序（author, title, journal/booktitle, year, month, volume, number, pages, doi, url, publisher, address, note, abstract, keywords）
+2) 期刊/会议名使用标准缩写（如 Physical Review Letters → Phys. Rev. Lett., Nature Communications → Nat. Commun.）
+3) 作者格式统一为 "Last, First and Last, First"
+4) 页码使用双连字符（123--456）；年份为4位数字；补全可推断的 DOI（格式 10.xxxx/xxxxx）
+5) 删除多余空格和换行，保持缩进与字段对齐；保留必要的大写并用 {} 保护专有名词
+6) 只返回规范化后的 BibTeX，不要任何解释或代码块围栏
 
 原始条目：
-{ENTRY}
-
-只输出规范化后的BibTeX条目，不要任何解释或额外文字。`;
+{ENTRY}`;
 
 /**
  * 检测重复条目的Prompt模板
@@ -139,7 +142,8 @@ export class AIFormatter {
     async formatBibEntry(rawEntry: string): Promise<string> {
         const prompt = FORMAT_PROMPT.replace('{ENTRY}', rawEntry);
         const response = await this.callAPI(prompt);
-        return this.cleanBibResponse(response);
+        const cleaned = this.cleanBibResponse(response);
+        return this.normalizeFormattedEntry(cleaned);
     }
 
     async formatBibEntries(
@@ -462,6 +466,13 @@ export class AIFormatter {
         }
 
         return cleaned.trim();
+    }
+
+    /**
+     * 将 AI 返回的 BibTeX 结果用本地格式化器二次规范，确保字段顺序/缩进统一
+     */
+    private normalizeFormattedEntry(text: string): string {
+        return formatBibEntryLocalWithOptions(text, this.config.localFormat).trim();
     }
 
     private sleep(ms: number): Promise<void> {

@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(npm install:*)",
-      "Bash(npm run compile:*)"
+      "Bash(npm run compile:*)",
+      "Bash(npm run test:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(npx vsce:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: 修复期刊缩写映射未生效的 bug v0.3.2\n\n- 从 localFormatter.ts 导出 DEFAULT_JOURNAL_ABBREVIATIONS\n- 在 config.ts 中使用完整的 200+ 期刊映射表\n- 现在期刊名称会正确缩写（如 Physical Review Applied → Phys. Rev. Applied）\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }

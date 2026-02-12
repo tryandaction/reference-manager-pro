@@ -27,6 +27,10 @@ export interface BibEntry {
     fields: BibFields;
     /** 原始文本，包含完整的条目内容，用于替换 */
     rawText: string;
+    /** 在原文件中的起始字符索引（从0开始） */
+    startIndex: number;
+    /** 在原文件中的结束字符索引（从0开始，包含右花括号） */
+    endIndex: number;
     /** 在原文件中的起始行号（从0开始） */
     startLine: number;
     /** 在原文件中的结束行号（从0开始） */
@@ -125,6 +129,8 @@ export function parseBibFile(content: string): ParseResult {
             key,
             fields,
             rawText,
+            startIndex,
+            endIndex,
             startLine,
             endLine,
         });
@@ -173,36 +179,63 @@ function findMatchingBrace(content: string, startPos: number): number {
  */
 function parseFields(fieldsText: string): BibFields {
     const fields: BibFields = {};
+    let i = 0;
 
-    // 匹配字段：fieldName = {value} 或 fieldName = "value" 或 fieldName = number
-    // 使用更宽松的正则，然后逐个处理
-    const fieldRegex = /(\w+)\s*=\s*/g;
+    while (i < fieldsText.length) {
+        i = skipWhitespaceAndCommas(fieldsText, i);
+        if (i >= fieldsText.length) {
+            break;
+        }
 
-    let fieldMatch: RegExpExecArray | null;
-    const fieldPositions: Array<{ name: string; valueStart: number }> = [];
+        const keyStart = i;
+        while (i < fieldsText.length && isFieldNameChar(fieldsText[i]!)) {
+            i++;
+        }
 
-    // 第一遍：找到所有字段名和值的起始位置
-    while ((fieldMatch = fieldRegex.exec(fieldsText)) !== null) {
-        fieldPositions.push({
-            name: fieldMatch[1]!.toLowerCase(),
-            valueStart: fieldMatch.index + fieldMatch[0].length,
-        });
-    }
+        if (i === keyStart) {
+            i++;
+            continue;
+        }
 
-    // 第二遍：提取每个字段的值
-    for (let i = 0; i < fieldPositions.length; i++) {
-        const current = fieldPositions[i]!;
-        const nextPos = fieldPositions[i + 1];
-        const nextStart = nextPos
-            ? nextPos.valueStart - nextPos.name.length - 3 // 回退到逗号位置
-            : fieldsText.length;
+        const rawKey = fieldsText.substring(keyStart, i).toLowerCase();
 
-        // 提取值文本
-        const valueText = fieldsText.substring(current.valueStart, nextStart).trim();
-        const value = extractFieldValue(valueText);
+        while (i < fieldsText.length && /\s/.test(fieldsText[i]!)) {
+            i++;
+        }
 
-        if (value !== null) {
-            fields[current.name] = value;
+        if (fieldsText[i] !== '=') {
+            continue;
+        }
+
+        i++;
+        while (i < fieldsText.length && /\s/.test(fieldsText[i]!)) {
+            i++;
+        }
+
+        if (i >= fieldsText.length) {
+            break;
+        }
+
+        const ch = fieldsText[i]!;
+        let rawValue = '';
+
+        if (ch === '{') {
+            const parsed = readBracedValue(fieldsText, i);
+            rawValue = parsed.value;
+            i = parsed.nextIndex;
+        } else if (ch === '"') {
+            const parsed = readQuotedValue(fieldsText, i);
+            rawValue = parsed.value;
+            i = parsed.nextIndex;
+        } else {
+            const parsed = readBareValue(fieldsText, i);
+            rawValue = parsed.value;
+            i = parsed.nextIndex;
+        }
+
+        const cleaned = cleanFieldValue(rawValue);
+        if (cleaned.length > 0) {
+            fields[rawKey] = cleaned;
         }
     }
 
@@ -216,40 +249,66 @@ function parseFields(fieldsText: string): BibFields {
  * @param valueText 值文本（可能包含尾部的逗号）
  * @returns 清理后的值，或null（如果无法解析）
  */
-function extractFieldValue(valueText: string): string | null {
-    // 去掉尾部逗号和空白
-    let text = valueText.replace(/,\s*$/, '').trim();
+function isFieldNameChar(ch: string): boolean {
+    return /[A-Za-z0-9_:+-]/.test(ch);
+}
 
-    if (text.length === 0) {
-        return null;
-    }
-
-    // 情况1：花括号包裹 {value}
-    if (text.startsWith('{')) {
-        const endBrace = findMatchingBrace('{' + text.substring(1), 0);
-        if (endBrace !== -1) {
-            // 提取花括号内的内容
-            const innerValue = text.substring(1, endBrace);
-            return cleanFieldValue(innerValue);
+function skipWhitespaceAndCommas(text: string, start: number): number {
+    let i = start;
+    while (i < text.length) {
+        const ch = text[i]!;
+        if (ch !== ',' && !/\s/.test(ch)) {
+            break;
         }
+        i++;
+    }
+    return i;
+}
+
+function readBracedValue(text: string, start: number): { value: string; nextIndex: number } {
+    const endIndex = findMatchingBrace(text, start);
+    if (endIndex === -1) {
+        return { value: text.substring(start + 1), nextIndex: text.length };
     }
 
-    // 情况2：双引号包裹 "value"
-    if (text.startsWith('"')) {
-        const endQuote = text.indexOf('"', 1);
-        if (endQuote !== -1) {
-            return cleanFieldValue(text.substring(1, endQuote));
+    return {
+        value: text.substring(start + 1, endIndex),
+        nextIndex: endIndex + 1,
+    };
+}
+
+function readQuotedValue(text: string, start: number): { value: string; nextIndex: number } {
+    let i = start + 1;
+    let out = '';
+
+    while (i < text.length) {
+        const ch = text[i]!;
+        if (ch === '\\' && i + 1 < text.length) {
+            out += ch + text[i + 1]!;
+            i += 2;
+            continue;
         }
+        if (ch === '"') {
+            i++;
+            break;
+        }
+        out += ch;
+        i++;
     }
 
-    // 情况3：纯数字或简单文本
-    // 去掉可能的逗号和空白
-    text = text.replace(/[,}\s]+$/, '');
-    if (text.length > 0) {
-        return cleanFieldValue(text);
+    return { value: out, nextIndex: i };
+}
+
+function readBareValue(text: string, start: number): { value: string; nextIndex: number } {
+    let i = start;
+    let out = '';
+
+    while (i < text.length && text[i] !== ',') {
+        out += text[i]!;
+        i++;
     }
 
-    return null;
+    return { value: out.trim(), nextIndex: i };
 }
 
 /**
@@ -309,9 +368,9 @@ export function serializeBibEntry(entry: BibEntry, indent: string = '  '): strin
 
     // 字段按照推荐顺序排列
     const fieldOrder = [
-        'author', 'title', 'journal', 'booktitle', 'year',
+        'author', 'title', 'journal', 'booktitle', 'year', 'month',
         'volume', 'number', 'pages', 'doi', 'url',
-        'publisher', 'address', 'month', 'note', 'abstract'
+        'publisher', 'address', 'edition', 'note', 'abstract', 'keywords'
     ];
 
     // 收集所有字段

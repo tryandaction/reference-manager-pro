@@ -104,6 +104,21 @@ describe('bibParser', () => {
             expect(result.entries).toHaveLength(1);
             expect(result.entries[0]!.fields.author).toBe('Smith, John');
         });
+
+        it('should not split fields when values contain equals signs', () => {
+            const content = `@article{equals,
+                author = {family=Bibber, given=K., prefix=van, useprefix=false and Doe, John},
+                title = {Test Title},
+                year = {2015}
+            }`;
+
+            const result = parseBibFile(content);
+
+            expect(result.entries).toHaveLength(1);
+            expect(result.entries[0]!.fields.author).toContain('family=Bibber');
+            expect(result.entries[0]!.fields.family).toBeUndefined();
+            expect(result.entries[0]!.fields.given).toBeUndefined();
+        });
     });
 
     describe('parseSingleEntry', () => {
@@ -133,6 +148,8 @@ describe('bibParser', () => {
                     year: '2023'
                 },
                 rawText: '',
+                startIndex: 0,
+                endIndex: 0,
                 startLine: 0,
                 endLine: 0
             };
@@ -156,6 +173,8 @@ describe('bibParser', () => {
                     title: 'On the Electrodynamics of Moving Bodies'
                 },
                 rawText: '',
+                startIndex: 0,
+                endIndex: 0,
                 startLine: 0,
                 endLine: 0
             };
@@ -175,6 +194,8 @@ describe('bibParser', () => {
                     title: 'A'.repeat(100)
                 },
                 rawText: '',
+                startIndex: 0,
+                endIndex: 0,
                 startLine: 0,
                 endLine: 0
             };
@@ -191,6 +212,8 @@ describe('bibParser', () => {
                 key: 'test',
                 fields: {},
                 rawText: '',
+                startIndex: 0,
+                endIndex: 0,
                 startLine: 0,
                 endLine: 0
             };
@@ -205,9 +228,9 @@ describe('bibParser', () => {
     describe('findEntryByKey', () => {
         it('should find entry by key', () => {
             const entries = [
-                { type: 'article', key: 'a', fields: {}, rawText: '', startLine: 0, endLine: 0 },
-                { type: 'book', key: 'b', fields: {}, rawText: '', startLine: 0, endLine: 0 },
-                { type: 'misc', key: 'c', fields: {}, rawText: '', startLine: 0, endLine: 0 }
+                { type: 'article', key: 'a', fields: {}, rawText: '', startIndex: 0, endIndex: 0, startLine: 0, endLine: 0 },
+                { type: 'book', key: 'b', fields: {}, rawText: '', startIndex: 0, endIndex: 0, startLine: 0, endLine: 0 },
+                { type: 'misc', key: 'c', fields: {}, rawText: '', startIndex: 0, endIndex: 0, startLine: 0, endLine: 0 }
             ];
 
             const found = findEntryByKey(entries, 'b');
@@ -218,7 +241,7 @@ describe('bibParser', () => {
 
         it('should return undefined for non-existent key', () => {
             const entries = [
-                { type: 'article', key: 'a', fields: {}, rawText: '', startLine: 0, endLine: 0 }
+                { type: 'article', key: 'a', fields: {}, rawText: '', startIndex: 0, endIndex: 0, startLine: 0, endLine: 0 }
             ];
 
             const found = findEntryByKey(entries, 'nonexistent');
@@ -230,9 +253,9 @@ describe('bibParser', () => {
     describe('extractKeysFromEntries', () => {
         it('should extract all keys', () => {
             const entries = [
-                { type: 'article', key: 'key1', fields: {}, rawText: '', startLine: 0, endLine: 0 },
-                { type: 'book', key: 'key2', fields: {}, rawText: '', startLine: 0, endLine: 0 },
-                { type: 'misc', key: 'key3', fields: {}, rawText: '', startLine: 0, endLine: 0 }
+                { type: 'article', key: 'key1', fields: {}, rawText: '', startIndex: 0, endIndex: 0, startLine: 0, endLine: 0 },
+                { type: 'book', key: 'key2', fields: {}, rawText: '', startIndex: 0, endIndex: 0, startLine: 0, endLine: 0 },
+                { type: 'misc', key: 'key3', fields: {}, rawText: '', startIndex: 0, endIndex: 0, startLine: 0, endLine: 0 }
             ];
 
             const keys = extractKeysFromEntries(entries);

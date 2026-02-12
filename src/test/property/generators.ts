@@ -81,6 +81,8 @@ export const arbitraryBibEntry = fc
         key,
         fields,
         rawText: `@${type}{${key}, author = {${fields.author}}, title = {${fields.title}}, year = {${fields.year}}}`,
+        startIndex: 0,
+        endIndex: 0,
         startLine: 0,
         endLine: 0
     }));
@@ -99,6 +101,8 @@ export const arbitraryUniqueBibEntries = (minLength: number, maxLength: number) 
                             key,
                             fields,
                             rawText: `@${type}{${key}, author = {${fields.author}}, title = {${fields.title}}, year = {${fields.year}}}`,
+                            startIndex: 0,
+                            endIndex: 0,
                             startLine: 0,
                             endLine: 0
                         }))

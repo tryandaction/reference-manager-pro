@@ -2,7 +2,7 @@
   "name": "reference-manager-pro",
   "displayName": "Reference Manager Pro",
   "description": "Smart Fix, quality validation, and change history for BibTeX in VS Code",
-  "version": "0.3.2",
+  "version": "0.3.4",
   "publisher": "EI",
   "icon": "assets/icon.png",
   "engines": {
@@ -35,7 +35,10 @@
     "onLanguage:latex",
     "onLanguage:bibtex",
     "onCommand:referenceManager.smartFix",
+    "onCommand:referenceManager.smartFixOfficialRaw",
     "onCommand:referenceManager.smartFixAll",
+    "onCommand:referenceManager.smartFixAllOfficialRaw",
+    "onCommand:referenceManager.officialReport",
     "onCommand:referenceManager.validateEntries",
     "onCommand:referenceManager.showHistory",
     "onCommand:referenceManager.formatEntry",
@@ -63,8 +66,23 @@
         "category": "Reference Manager"
       },
       {
+        "command": "referenceManager.smartFixOfficialRaw",
+        "title": "Advanced: Smart Fix (Official Raw)",
+        "category": "Reference Manager"
+      },
+      {
         "command": "referenceManager.smartFixAll",
         "title": "Batch Official Fix (Smart Fix All)",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.smartFixAllOfficialRaw",
+        "title": "Advanced: Batch Official Fix (Raw)",
+        "category": "Reference Manager"
+      },
+      {
+        "command": "referenceManager.officialReport",
+        "title": "Advanced: Official Metadata Report",
         "category": "Reference Manager"
       },
       {
@@ -146,6 +164,12 @@
           "command": "referenceManager.smartFixAll"
         },
         {
+          "command": "referenceManager.smartFixAllOfficialRaw"
+        },
+        {
+          "command": "referenceManager.officialReport"
+        },
+        {
           "command": "referenceManager.removeDuplicates"
         },
         {
@@ -156,6 +180,9 @@
         },
         {
           "command": "referenceManager.formatEntry"
+        },
+        {
+          "command": "referenceManager.smartFixOfficialRaw"
         },
         {
           "command": "referenceManager.formatAllEntriesLocal"
@@ -287,6 +314,16 @@
             "Always replace with official key (recommended)"
           ],
           "description": "Cite key policy when official metadata is available"
+        },
+        "referenceManager.officialMetadata.formatMode": {
+          "type": "string",
+          "default": "normalized",
+          "enum": ["normalized", "raw"],
+          "enumDescriptions": [
+            "Official BibTeX + local normalization (default)",
+            "Official BibTeX raw output (no local normalization)"
+          ],
+          "description": "Official metadata formatting mode"
         }
       }
     }

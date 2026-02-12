@@ -2,6 +2,28 @@
 
 All notable changes to Reference Manager Pro will be documented in this file.
 
+## [0.3.4] - 2026-02-04
+
+### Added
+- 📊 **官方元数据报告**：新增 `Advanced: Official Metadata Report`，输出 Markdown 报告（OK/无 DOI/失败/跳过）
+
+### Technical Details
+- 逐条检查 DOI 官方入口可用性，支持取消
+- 生成可复制的 Markdown 结果，便于审计与可信展示
+
+## [0.3.3] - 2026-02-04
+
+### Added
+- 🏛️ **官方格式双模式**：支持“官方原始 BibTeX（raw）”与“官方+本地规范化（normalized）”两种输出
+- 🧭 **新命令**：
+  - `Advanced: Smart Fix (Official Raw)`（单条官方原始格式）
+  - `Advanced: Batch Official Fix (Raw)`（批量官方原始格式）
+- ⚙️ **新配置**：`referenceManager.officialMetadata.formatMode`（默认 `normalized`）
+
+### Technical Details
+- Smart Fix/Smart Fix All 支持按模式选择是否执行本地规范化
+- raw 模式仅在必要时替换 cite key，并保留 `% oldkey` 注释
+
 ## [0.3.2] - 2026-02-03
 
 ### Fixed

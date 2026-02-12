@@ -1,6 +1,6 @@
 # Reference Manager Pro - 用户指南
 
-🎓 AI 驱动的 LaTeX 参考文献管理工具
+🎓 专业的 LaTeX 参考文献管理工具（Smart Fix + 官方元数据 + 可回滚）
 
 ---
 
@@ -20,66 +20,57 @@
 
 ## 产品简介
 
-Reference Manager Pro 是一款专为学术研究人员、学生和论文作者设计的 VS Code / Kiro 扩展。它利用 AI 技术简化 BibTeX 参考文献的管理工作，让您专注于研究本身。
-
-### 适用人群
-
-- 📚 撰写学术论文的研究人员
-- 🎓 正在写毕业论文的学生
-- 📝 需要管理大量参考文献的作者
-- 🔬 使用 LaTeX 排版的科研工作者
+Reference Manager Pro 是面向学术研究人员、学生和论文作者的 VS Code / Kiro 扩展。它将“格式化”升级为“可信修复”：优先使用 DOI 官方元数据，必要时才启用 AI，且所有变更都有可信度与可回滚记录。
 
 ### 核心价值
 
-- **节省时间**：自动格式化杂乱的 BibTeX 条目
-- **保持整洁**：检测并清理未使用的引用
-- **避免重复**：智能识别重复条目（如 arXiv 预印本和正式发表版）
-- **离线可用**：本地格式化功能无需网络
+- **官方对齐**：有 DOI 就拉取官方 BibTeX，避免“格式正确但内容不准”
+- **低打扰**：Smart Fix 一键完成，复杂选项隐藏在高级设置
+- **可信透明**：变更摘要 + 可信度评分 + 来源标签
+- **可回滚**：任何自动修复都可一键撤回
 
 ---
 
 ## 功能特性
 
-### 🤖 AI 智能格式化
+### ✨ Smart Fix（推荐）
 
-使用 Claude AI 规范化 BibTeX 条目：
-- 统一作者姓名格式（Last, First and Last, First）
-- 标准化期刊缩写（如 Physical Review Letters → Phys. Rev. Lett.）
-- 自动补全 DOI（如果可推断）
-- 规范页码格式（123--456）
-- 清理多余空格和换行
+一键修复单条 BibTeX：
+- **优先**使用 DOI 官方元数据
+- 没有 DOI 时回退到本地规则
+- 可选 AI 增强（有 API Key 时自动启用）
+- 输出变更摘要 + 可信度 + 来源标签
+ - 需要保留官方原始排版时使用 `Advanced: Smart Fix (Official Raw)`
 
-### 📝 本地格式化（免费无限制）
+### 🧰 Smart Fix All（批量）
 
-不需要 API Key 的离线格式化功能：
-- 修复常见字段名拼写错误（如 autor → author）
-- 按标准顺序排列字段
-- 清理多余空白字符
-- 统一缩进格式
+批量修复整份 .bib：
+- 逐条拉取官方元数据（有 DOI）
+- 自动回退本地修复
+- 汇总官方/本地/失败统计
+ - 需要保留官方原始排版时使用 `Advanced: Batch Official Fix (Raw)`
 
-### 🔍 未使用引用检测
+### ✅ 质量校验（Validate）
 
-扫描整个 LaTeX 项目，找出 .bib 文件中未被引用的条目：
-- 支持多种引用命令（\cite, \citep, \citet 等）
-- 支持 natbib 和 biblatex
-- 一键删除未使用条目
-- 显示详细统计信息
+专业校验并打分：
+- 缺失必填字段
+- 年份/页码/DOI 格式异常
+- **重复 DOI / 重复 Key**
+- 输出简洁（只展示 error / warn）
 
-### 🔄 智能重复检测
+### 🧾 变更历史（History）
 
-使用 AI 识别重复条目：
-- 检测 arXiv 预印本和正式发表版本
-- 识别格式不同但内容相同的条目
-- AI 推荐保留哪个版本
-- 提供判断理由
+完整变更记录：
+- 显示来源（官方/AI/本地）
+- 可信度评分
+- 一键回滚
 
-### 📦 批量格式化（Pro 功能）
+### 🔍 高级工具
 
-一次性格式化整个 .bib 文件中的所有条目：
-- 显示实时进度
-- 支持取消操作
-- 失败条目保留原文
-- 显示处理统计
+- 未使用引用检测
+- AI 重复条目检测与清理
+- 批量格式化（Pro）
+- 官方元数据可用性报告
 
 ---
 
@@ -87,187 +78,83 @@ Reference Manager Pro 是一款专为学术研究人员、学生和论文作者�
 
 ### 方式一：从 VSIX 文件安装
 
-1. 下载 `reference-manager-pro-x.x.x.vsix` 文件
-2. 打开 VS Code 或 Kiro
-3. 按 `Ctrl+Shift+P`（Mac: `Cmd+Shift+P`）
+1. 下载 `reference-manager-pro-x.x.x.vsix`
+2. 打开 VS Code / Kiro
+3. `Ctrl+Shift+P`（Mac: `Cmd+Shift+P`）
 4. 输入 "Install from VSIX"
-5. 选择下载的 .vsix 文件
+5. 选择 .vsix 文件
 6. 重新加载窗口
 
 ### 方式二：从 Marketplace 安装（即将上线）
 
-1. 打开 VS Code 扩展面板（`Ctrl+Shift+X`）
+1. 打开扩展面板（`Ctrl+Shift+X`）
 2. 搜索 "Reference Manager Pro"
 3. 点击安装
-
-### 系统要求
-
-- VS Code 1.85.0 或更高版本
-- 或 Kiro IDE
-- （可选）Anthropic API Key（用于 AI 功能）
 
 ---
 
 ## 快速开始
 
-### 无需 API Key 的功能
+### 无需 API Key（推荐）
 
-即使没有 Anthropic API Key，您也可以使用以下功能：
+1. 打开 .bib 文件  
+2. 运行 `Reference Manager: Smart Fix`  
+3. 如需批量：运行 `Advanced: Smart Fix All (Official)`  
+4. 运行 `Validate References` 检查质量  
 
-1. **本地格式化**
-   - 打开 .bib 文件
-   - 选中要格式化的条目
-   - 按 `Ctrl+Shift+P`
-   - 输入 "Reference Manager: Format BibTeX Entry (Local)"
-   - 完成！
+### 启用 AI 增强（可选）
 
-2. **移除重复条目**（基础功能）
-   - 打开 .bib 文件
-   - 运行 "Reference Manager: Remove Duplicate Entries"
-
-### 配置 API Key（启用 AI 功能）
-
-推荐使用 **Groq**（免费且速度快）：
+推荐 Groq（免费、速度快）：
 
 1. 访问 [console.groq.com](https://console.groq.com)
-2. 注册账号并获取 API Key（免费）
-3. 在 VS Code 中按 `Ctrl+,` 打开设置
-4. 搜索 "Reference Manager"
-5. 确保 `AI Provider` 是 `groq`
-6. 在 `Groq Api Key` 字段输入您的 API Key
-
-或者使用 Anthropic（付费，新用户有 $5 免费额度）：
-
-1. 访问 [console.anthropic.com](https://console.anthropic.com)
-2. 注册账号并获取 API Key
-3. 在设置中将 `AI Provider` 改为 `anthropic`
-4. 在 `Api Key` 字段输入您的 API Key
-
-### 基本使用流程
-
-```
-1. 打开您的 LaTeX 项目
-2. 打开 .bib 文件
-3. 选中需要格式化的条目
-4. Ctrl+Shift+P → "Format BibTeX Entry"
-5. 查看格式化结果
-```
+2. 获取 API Key
+3. VS Code 设置中搜索 "Reference Manager"
+4. `AI Provider` 选 `groq`
+5. 填入 `Groq Api Key`
 
 ---
 
 ## 详细功能说明
 
-### 命令列表
+### 命令列表（简化）
 
-| 命令 | 说明 | 需要 API Key |
-|------|------|-------------|
-| Format BibTeX Entry | AI 智能格式化选中条目 | ✅ |
-| Format BibTeX Entry (Local) | 本地规则格式化 | ❌ |
-| Find Unused Citations | 查找未使用的引用 | ✅ |
-| Remove Duplicate Entries | 检测并移除重复条目 | ✅ |
-| Format All Entries (Pro) | 批量格式化所有条目 | ✅ |
-| Activate License | 激活 Pro 许可证 | ❌ |
-| View License Status | 查看许可证状态 | ❌ |
+| 命令 | 说明 |
+|------|------|
+| Smart Fix | 单条一键修复 |
+| Advanced: Smart Fix (Official Raw) | 官方原始格式（不做本地规范化） |
+| Advanced: Smart Fix All (Official) | 批量官方修复 |
+| Advanced: Batch Official Fix (Raw) | 批量官方原始格式 |
+| Advanced: Official Metadata Report | 官方元数据可用性报告 |
+| Validate References | 质量校验与评分 |
+| History | 变更历史与回滚 |
+| Advanced: Find Unused Citations | 未使用引用检测 |
+| Advanced: Remove Duplicate Entries | AI 重复检测 |
+| Advanced: Format Entry (Local/AI) | 传统格式化 |
+| Advanced: Format All Entries (Pro) | 批量格式化 |
 
-### AI 格式化示例
+### 推荐流程
 
-**格式化前：**
-```bibtex
-@article{einstein,
-author={A. Einstein},
-title={On the Electrodynamics of Moving Bodies},
-journal={Annalen der Physik},
-year=1905,
-volume={17},
-pages={891-921}
-}
 ```
-
-**格式化后：**
-```bibtex
-@article{einstein,
-  author = {Einstein, Albert},
-  title = {On the Electrodynamics of Moving Bodies},
-  journal = {Ann. Phys.},
-  year = {1905},
-  volume = {17},
-  pages = {891--921},
-  doi = {10.1002/andp.19053221004}
-}
+.bib → Smart Fix → Validate → (如有需要) History 回滚
 ```
-
-### 本地格式化示例
-
-**格式化前：**
-```bibtex
-@article{key,
-autor={John Smith},
-  tilte={Some Paper},
-year={2024},
-journal={Nature}
-}
-```
-
-**格式化后：**
-```bibtex
-@article{key,
-  author = {John Smith},
-  title = {Some Paper},
-  journal = {Nature},
-  year = {2024},
-}
-```
-
-### 支持的引用命令
-
-本扩展支持以下 LaTeX 引用命令：
-
-- 标准：`\cite`
-- natbib：`\citep`, `\citet`, `\citeauthor`, `\citeyear`, `\citealt`, `\citealp`
-- biblatex：`\parencite`, `\textcite`, `\autocite`, `\footcite`, `\fullcite`
-- 其他：`\nocite`, `\Cite`, `\Citep`, `\Citet`
 
 ---
 
 ## 配置选项
 
-在 VS Code 设置中搜索 "Reference Manager" 可以找到以下配置：
-
 | 设置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `referenceManager.aiProvider` | AI 提供商 (groq/anthropic) | groq |
-| `referenceManager.groqApiKey` | Groq API Key (免费) | 空 |
-| `referenceManager.groqModel` | Groq 模型 | llama-3.3-70b-versatile |
+| `referenceManager.aiProvider` | AI 提供商 | groq |
+| `referenceManager.groqApiKey` | Groq API Key | 空 |
 | `referenceManager.apiKey` | Anthropic API Key | 空 |
-| `referenceManager.model` | Anthropic 模型 | claude-sonnet-4-20250514 |
-| `referenceManager.licenseKey` | Pro 许可证密钥 | 空 |
-| `referenceManager.maxRetries` | API 请求最大重试次数 | 3 |
-| `referenceManager.timeout` | API 请求超时时间（毫秒） | 30000 |
+| `referenceManager.officialMetadata.enabled` | 启用 DOI 官方元数据 | true |
+| `referenceManager.officialMetadata.timeout` | 官方元数据超时(ms) | 8000 |
+| `referenceManager.officialMetadata.keyPolicy` | 引用 key 策略 | officialWhenUnused |
+| `referenceManager.officialMetadata.formatMode` | 官方格式模式（normalized/raw） | normalized |
+| `referenceManager.validation.strictness` | 校验严格度 | normal |
 
-### AI 提供商选择
-
-| 提供商 | 费用 | 速度 | 推荐场景 |
-|--------|------|------|----------|
-| **Groq** | 🆓 免费 | ⚡ 极快 | 推荐！日常使用 |
-| **Anthropic** | 💰 付费 | 中等 | 高质量需求 |
-
-#### 配置 Groq (推荐)
-
-1. 访问 [console.groq.com](https://console.groq.com)
-2. 注册账号（免费）
-3. 创建 API Key
-4. 在 VS Code 设置中：
-   - `AI Provider` 选择 `groq`
-   - `Groq Api Key` 填入你的 Key
-
-#### 配置 Anthropic
-
-1. 访问 [console.anthropic.com](https://console.anthropic.com)
-2. 注册账号（新用户有 $5 免费额度）
-3. 创建 API Key
-4. 在 VS Code 设置中：
-   - `AI Provider` 选择 `anthropic`
-   - `Api Key` 填入你的 Key
+高级格式化设置（可选）：
+`referenceManager.localFormat.*`
 
 ---
 
@@ -275,134 +162,52 @@ journal={Nature}
 
 | 功能 | 免费版 | Pro 版 |
 |------|--------|--------|
-| AI 格式化 | 每天 5 次 | ✅ 无限制 |
-| 查找未使用引用 | 每天 3 次 | ✅ 无限制 |
-| 移除重复条目 | ✅ | ✅ |
-| 本地格式化 | ✅ 无限制 | ✅ 无限制 |
+| Smart Fix（含官方元数据） | ✅ | ✅ |
+| AI 增强次数 | 5/天 | ✅ 无限制 |
+| Validate / History | ✅ | ✅ |
+| 未使用引用检测 | 3/天 | ✅ 无限制 |
 | 批量格式化 | ❌ | ✅ |
-
-### 升级到 Pro 版
-
-1. 访问 [Gumroad 购买页面](https://gumroad.com/l/reference-manager-pro)
-2. 完成购买获取 License Key
-3. 在 VS Code 中运行 "Reference Manager: Activate License"
-4. 输入您的 License Key
-5. 享受无限制使用！
 
 ---
 
 ## 常见问题
 
-### Q: 没有 API Key 能用吗？
+### Q: 为什么 Smart Fix 没有“变正确”？
 
-**A:** 可以！本地格式化功能完全免费且无需 API Key。
+**A:** 没有 DOI 或官方元数据获取失败时，只能做本地规范化。建议先补 DOI，再 Smart Fix。
 
-如果想用 AI 功能，推荐使用 **Groq**（完全免费）：
-- 访问 [console.groq.com](https://console.groq.com) 注册
-- 获取免费 API Key
-- 在设置中配置即可
+### Q: 官方 key 会不会替换我的引用 key？
 
-### Q: Groq 和 Anthropic 有什么区别？
+**A:** 默认策略是“仅当 .tex 中未使用时才替换”（`officialWhenUnused`）。你可以在设置中改为始终保留或始终替换。
+如果替换，会在条目第一行追加注释保留旧 key，避免“找不到”。
 
-**A:**
-| | Groq | Anthropic |
-|--|------|-----------|
-| 费用 | 🆓 免费 | 💰 付费 |
-| 速度 | ⚡ 极快 | 中等 |
-| 模型 | Llama 3.3 70B | Claude |
+### Q: 为什么提示重复 DOI/Key？
 
-推荐使用 Groq，免费且效果很好。
-
-### Q: API Key 收费吗？
-
-**A:** 
-- **Groq**: 完全免费！
-- **Anthropic**: 提供免费额度，新用户有 $5
-
-### Q: 免费版每天的使用次数什么时候重置？
-
-**A:** 每天 UTC 0:00（北京时间 8:00）自动重置。
-
-### Q: Pro 版 License Key 格式是什么？
-
-**A:** License Key 以 "RMP-" 开头，至少 20 个字符。例如：`RMP-XXXX-XXXX-XXXX-XXXX`
-
-### Q: 支持哪些 BibTeX 条目类型？
-
-**A:** 支持所有标准类型：
-- @article
-- @book
-- @inproceedings
-- @conference
-- @phdthesis
-- @mastersthesis
-- @techreport
-- @misc
-- 等等
-
-### Q: 可以在 Kiro 中使用吗？
-
-**A:** 可以！本扩展完全兼容 Kiro IDE。
+**A:** 说明同一篇文献出现了多个条目。建议用 `Remove Duplicate Entries` 清理。
 
 ---
 
 ## 故障排除
 
-### 问题：API 调用失败
+### 官方元数据获取失败
 
-**可能原因和解决方案：**
+可能原因：
+- DOI 不存在或格式错误
+- 网络超时
+- 目标站点限制访问
 
-1. **API Key 无效**
-   - 检查设置中的 API Key 是否正确
-   - 确认 Key 没有过期
-
-2. **网络问题**
-   - 检查网络连接
-   - 如果使用代理，确保配置正确
-
-3. **请求超时**
-   - 在设置中增加 `timeout` 值
-   - 检查网络稳定性
-
-4. **速率限制**
-   - 等待几分钟后重试
-   - 考虑升级 API 配额
-
-### 问题：格式化结果不理想
-
-**解决方案：**
-- 确保选中了完整的 BibTeX 条目
-- 检查原始条目是否有严重的格式错误
-- 尝试使用本地格式化先清理基本格式
-
-### 问题：未检测到 .tex 文件中的引用
-
-**可能原因：**
-- .tex 文件不在工作区内
-- 使用了不支持的引用命令
-- 文件编码问题
-
-### 问题：扩展未激活
-
-**解决方案：**
-1. 确保打开了 .bib 或 .tex 文件
-2. 检查扩展是否已启用
-3. 重新加载 VS Code 窗口
+解决方案：
+- 检查 DOI 格式
+- 增大 `officialMetadata.timeout`
+- 临时关闭官方元数据拉取，仅做本地修复
 
 ---
 
 ## 技术支持
 
-- 📧 邮箱：support@example.com
-- 🐛 问题反馈：[GitHub Issues](https://github.com/your-username/reference-manager-pro/issues)
-- 📖 更新日志：查看 CHANGELOG.md
+- 📧 邮箱：2812149844@qq.com
+- 🐛 GitHub Issues：https://github.com/tryandaction/reference-manager-pro/issues
 
 ---
 
-## 许可证
-
-MIT License - 详见 LICENSE 文件
-
----
-
-*Reference Manager Pro - 让参考文献管理变得简单* 🎓
+*Reference Manager Pro - 让参考文献管理更可信* 🎓

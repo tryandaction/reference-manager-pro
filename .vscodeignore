@@ -4,7 +4,9 @@
 # 源代码（只需要编译后的out目录）
 src/**
 **/*.ts
-!out/**/*.d.ts
+# 编译产物（仅保留打包后的入口）
+out/**
+!out/extension.js
 
 # 开发配置文件
 .vscode/**
@@ -16,21 +18,15 @@ tsconfig.json
 .git/**
 .gitignore
 
-# Node模块 - 保留运行时依赖
-# 排除开发依赖，但保留 @anthropic-ai/sdk
+# Node模块 - 已通过 esbuild 打包进 out/extension.js
 node_modules/**
-!node_modules/@anthropic-ai/**
-!node_modules/agentkeepalive/**
-!node_modules/humanize-ms/**
-!node_modules/ms/**
-!node_modules/form-data-encoder/**
-!node_modules/formdata-node/**
-!node_modules/node-fetch/**
-!node_modules/web-streams-polyfill/**
 
 # 测试文件
 **/test/**
 **/*.test.js
+
+# 构建脚本
+scripts/**
 
 # 私密文件（绝对不要打包！）
 .env
@@ -39,6 +35,7 @@ node_modules/**
 secrets/**
 *.secret
 *.key
+PRODUCT_AND_BUSINESS_GUIDE.md
 
 # Kiro/Claude 配置
 .kiro/**

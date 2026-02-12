@@ -34,3 +34,6 @@ secrets/
 # License 记录（包含用户信息）
 licenses.json
 scripts/licenses.json
+
+# 本地商业化/产品计划（请勿上传）
+PRODUCT_AND_BUSINESS_GUIDE.md

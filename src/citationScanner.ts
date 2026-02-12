@@ -102,12 +102,13 @@ export function extractCitationKeys(texContent: string): string[] {
  * console.log(`工作区共引用了 ${usedKeys.size} 个文献`);
  */
 export async function scanWorkspaceForCitations(
-    progress?: vscode.Progress<{ message?: string; increment?: number }>
+    progress?: vscode.Progress<{ message?: string; increment?: number }>,
+    texFilesOverride?: vscode.Uri[]
 ): Promise<Set<string>> {
     const allKeys = new Set<string>();
 
     // 查找所有.tex文件
-    const texFiles = await findTexFiles();
+    const texFiles = texFilesOverride ?? await findTexFiles();
 
     if (texFiles.length === 0) {
         return allKeys;
