@@ -30,7 +30,6 @@
     "claude",
     "anthropic"
   ],
-
   "activationEvents": [
     "onLanguage:latex",
     "onLanguage:bibtex",
@@ -206,7 +205,10 @@
         "referenceManager.aiProvider": {
           "type": "string",
           "default": "groq",
-          "enum": ["anthropic", "groq"],
+          "enum": [
+            "anthropic",
+            "groq"
+          ],
           "enumDescriptions": [
             "Anthropic Claude (需要付费 API Key)",
             "Groq (免费，速度快)"
@@ -247,7 +249,12 @@
         "referenceManager.groqModel": {
           "type": "string",
           "default": "llama-3.3-70b-versatile",
-          "enum": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"],
+          "enum": [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it"
+          ],
           "enumDescriptions": [
             "Llama 3.3 70B - 最强大，推荐使用",
             "Llama 3.1 8B - 更快速",
@@ -269,8 +276,20 @@
         },
         "referenceManager.localFormat.protectTitleWords": {
           "type": "array",
-          "default": ["LaTeX", "BibTeX", "arXiv", "GitHub", "OpenAI", "GPU", "CPU", "AI", "DOI"],
-          "items": { "type": "string" },
+          "default": [
+            "LaTeX",
+            "BibTeX",
+            "arXiv",
+            "GitHub",
+            "OpenAI",
+            "GPU",
+            "CPU",
+            "AI",
+            "DOI"
+          ],
+          "items": {
+            "type": "string"
+          },
           "description": "Local formatter: wrap these words in {} in title to preserve capitalization"
         },
         "referenceManager.localFormat.journalAbbreviations": {
@@ -289,7 +308,11 @@
         "referenceManager.validation.strictness": {
           "type": "string",
           "default": "normal",
-          "enum": ["loose", "normal", "strict"],
+          "enum": [
+            "loose",
+            "normal",
+            "strict"
+          ],
           "description": "Validation strictness"
         },
         "referenceManager.officialMetadata.enabled": {
@@ -307,7 +330,11 @@
         "referenceManager.officialMetadata.keyPolicy": {
           "type": "string",
           "default": "officialAlways",
-          "enum": ["preserve", "officialWhenUnused", "officialAlways"],
+          "enum": [
+            "preserve",
+            "officialWhenUnused",
+            "officialAlways"
+          ],
           "enumDescriptions": [
             "Always keep original cite key",
             "Use official key only when the original key is not used in .tex",
@@ -318,7 +345,10 @@
         "referenceManager.officialMetadata.formatMode": {
           "type": "string",
           "default": "normalized",
-          "enum": ["normalized", "raw"],
+          "enum": [
+            "normalized",
+            "raw"
+          ],
           "enumDescriptions": [
             "Official BibTeX + local normalization (default)",
             "Official BibTeX raw output (no local normalization)"
@@ -339,27 +369,30 @@
     "test": "vitest run",
     "test:integration": "npm run compile && node ./out/test/integration/runTest.js",
     "test:watch": "vitest",
-    "package": "vsce package",
-    "publish": "vsce publish"
+    "package": "npx @vscode/vsce package",
+    "publish": "npx @vscode/vsce publish"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.19.28",
     "@types/vscode": "^1.85.0",
-    "@typescript-eslint/eslint-plugin": "^6.13.0",
-    "@typescript-eslint/parser": "^6.13.0",
+    "@typescript-eslint/eslint-plugin": "^8.56.0",
+    "@typescript-eslint/parser": "^8.56.0",
     "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.25.9",
-    "eslint": "^8.54.0",
+    "eslint": "^9.39.3",
     "fast-check": "^4.5.3",
-    "mocha": "^10.8.2",
+    "mocha": "^11.7.5",
     "typescript": "^5.3.0",
     "vitest": "^4.0.16"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
-    "undici": "^5.28.4"
+    "undici": "^7.22.0"
+  },
+  "overrides": {
+    "diff": "^8.0.3",
+    "minimatch": "^10.2.1"
   },
   "repository": {
     "type": "git",
