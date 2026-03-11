@@ -26,6 +26,7 @@ import {
     trackSuccessAndMaybeRequestRating
 } from './license';
 import { formatBibEntryLocalWithOptions } from './localFormatter';
+import { WorkflowManager } from './workflow/workflowManager';
 
 /** AI格式化器实例 */
 let formatter: AIFormatter | null = null;
@@ -35,6 +36,9 @@ let outputChannel: vscode.OutputChannel | null = null;
 
 /** 变更历史 */
 let changeHistory: ChangeHistory | null = null;
+
+/** 工作流管理器 */
+let workflowManager: WorkflowManager | null = null;
 
 interface ChangeMeta {
     source?: 'local' | 'ai' | 'official' | 'system';
@@ -258,17 +262,58 @@ function deriveKeyFromDoi(doi: string): string | null {
     return `DOI:${trimmed.replace(/\//g, ':')}`;
 }
 
-function appendKeyComment(entryText: string, oldKey: string): string {
+function appendKeyComment(entryText: string, oldKey: string, prefix: string = '% oldkey:'): string {
     const lines = entryText.split('\n');
     if (lines.length === 0) {
         return entryText;
     }
     const firstLine = lines[0] ?? '';
-    if (firstLine.includes('oldkey:')) {
+    // Check if comment already exists
+    if (firstLine.includes(prefix)) {
         return entryText;
     }
-    lines[0] = `${firstLine} % oldkey: ${oldKey}`;
+    lines[0] = `${firstLine} ${prefix} ${oldKey}`;
     return lines.join('\n');
+}
+
+function appendOfficialKeyComment(entryText: string, officialKey: string, prefix: string = '% official_key:'): string {
+    const lines = entryText.split('\n');
+    if (lines.length === 0) {
+        return entryText;
+    }
+    const firstLine = lines[0] ?? '';
+    // Check if comment already exists
+    if (firstLine.includes(prefix)) {
+        return entryText;
+    }
+    lines[0] = `${firstLine} ${prefix} ${officialKey}`;
+    return lines.join('\n');
+}
+
+interface KeyReplacementOptions {
+    mode: 'replace-and-comment-old' | 'keep-and-comment-official' | 'replace-only' | 'keep-only';
+    commentPrefix: string;
+    originalKey: string;
+    officialKey: string;
+}
+
+function applyKeyReplacement(entryText: string, options: KeyReplacementOptions): string {
+    const { mode, commentPrefix, originalKey, officialKey } = options;
+
+    if (mode === 'replace-and-comment-old') {
+        // Replace key with official key, add comment with old key
+        const replaced = replaceEntryKeyRaw(entryText, officialKey);
+        return appendKeyComment(replaced, originalKey, commentPrefix);
+    } else if (mode === 'keep-and-comment-official') {
+        // Keep original key, add comment with official key
+        return appendOfficialKeyComment(entryText, officialKey, commentPrefix);
+    } else if (mode === 'replace-only') {
+        // Replace key with official key, no comment
+        return replaceEntryKeyRaw(entryText, officialKey);
+    } else {
+        // keep-only: Keep original key, no comment (return as-is)
+        return entryText;
+    }
 }
 
 function replaceEntryKeyRaw(entryText: string, newKey: string): string {
@@ -1382,34 +1427,44 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
                 const officialEntry = parseSingleEntry(officialText);
                 const notes: string[] = [];
 
-                let replacedKey = false;
+                let targetKey = officialEntry?.key ?? '';
+                let officialKey = targetKey;
+
                 if (officialEntry && originalKey) {
                     const doiForKey = officialEntry.fields.doi ?? official.doi;
                     const derivedKey = doiForKey ? deriveKeyFromDoi(doiForKey) : null;
-                    const officialKey = derivedKey ?? officialEntry.key;
+                    officialKey = derivedKey ?? officialEntry.key;
                     if (derivedKey && derivedKey !== officialEntry.key) {
                         notes.push(`已使用 DOI 派生 key：${derivedKey}`);
                     }
 
-                    let targetKey = officialEntry.key;
-                    if (officialKey !== originalKey) {
-                        const decision = await resolveKeyPolicyDecision(
-                            keyPolicy,
-                            originalKey,
-                            officialKey,
-                            existingKeys
-                        );
-                        if (!decision.useOfficial) {
-                            targetKey = originalKey;
-                            notes.push(`已保留原引用 key（官方 key: ${officialKey}）`);
-                            if (decision.reason) {
-                                notes.push(`原因：${decision.reason}`);
-                            }
-                        } else {
-                            targetKey = officialKey;
-                            replacedKey = true;
-                            if (decision.usedKeys?.has(originalKey)) {
-                                notes.push('已使用官方 key，请更新 .tex 中的旧 key');
+                    // Determine the target key based on key replacement mode
+                    const keyReplacementMode = config.customization.behaviors.keyReplacement.mode;
+
+                    if (keyReplacementMode === 'keep-and-comment-official' || keyReplacementMode === 'keep-only') {
+                        // Always keep original key when in these modes
+                        targetKey = originalKey;
+                        notes.push(`已保留原引用 key（官方 key: ${officialKey}）`);
+                    } else if (keyReplacementMode === 'replace-only' || keyReplacementMode === 'replace-and-comment-old') {
+                        // replace modes: use keyPolicy to decide
+                        if (officialKey !== originalKey) {
+                            const decision = await resolveKeyPolicyDecision(
+                                keyPolicy,
+                                originalKey,
+                                officialKey,
+                                existingKeys
+                            );
+                            if (!decision.useOfficial) {
+                                targetKey = originalKey;
+                                notes.push(`已保留原引用 key（官方 key: ${officialKey}）`);
+                                if (decision.reason) {
+                                    notes.push(`原因：${decision.reason}`);
+                                }
+                            } else {
+                                targetKey = officialKey;
+                                if (decision.usedKeys?.has(originalKey)) {
+                                    notes.push('已使用官方 key，请更新 .tex 中的旧 key');
+                                }
                             }
                         }
                     }
@@ -1430,11 +1485,27 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
                 let finalText = officialText;
                 if (officialFormatMode === 'normalized') {
                     const formatted = formatBibEntryLocalWithOptions(officialText, localOptions);
-                    finalText = replacedKey && originalKey
-                        ? appendKeyComment(formatted, originalKey)
-                        : formatted;
-                } else if (replacedKey && originalKey) {
-                    finalText = appendKeyComment(officialText, originalKey);
+                    // Apply key replacement comment if keys differ
+                    if (originalKey && officialKey !== originalKey) {
+                        const keyReplacementOptions: KeyReplacementOptions = {
+                            mode: config.customization.behaviors.keyReplacement.mode,
+                            commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
+                            originalKey: originalKey,
+                            officialKey: officialKey,
+                        };
+                        finalText = applyKeyReplacement(formatted, keyReplacementOptions);
+                    } else {
+                        finalText = formatted;
+                    }
+                } else if (originalKey && officialKey !== originalKey) {
+                    // Apply key replacement comment for non-normalized mode
+                    const keyReplacementOptions: KeyReplacementOptions = {
+                        mode: config.customization.behaviors.keyReplacement.mode,
+                        commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
+                        originalKey: originalKey,
+                        officialKey: officialKey,
+                    };
+                    finalText = applyKeyReplacement(officialText, keyReplacementOptions);
                 }
                 const validation = validateAndAnalyze(finalText);
                 await applyEditorEditWithHistory(
@@ -1640,8 +1711,11 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
 
             try {
                 let formatted: string | null = null;
-                let shouldAppendOldKeyComment = false;
-                
+                let originalKey = entry.key;
+                let targetKey = entry.key;
+                let officialKey = entry.key;
+                let needsKeyComment = false;
+
                 if (officialEnabled) {
                     const official = await resolveOfficialBibtexFromEntry(entry.rawText, officialTimeout);
                     if (official) {
@@ -1650,41 +1724,48 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
                         if (officialEntry) {
                             const doiForKey = officialEntry.fields.doi ?? official.doi;
                             const derivedKey = doiForKey ? deriveKeyFromDoi(doiForKey) : null;
-                            const officialKey = derivedKey ?? officialEntry.key;
-                            if (officialKey !== entry.key) {
-                                let useOfficial = false;
-                                if (keyPolicy === 'officialAlways') {
-                                    useOfficial = true;
-                                } else if (keyPolicy === 'officialWhenUnused') {
-                                    useOfficial = usedKeys ? !usedKeys.has(entry.key) : false;
-                                }
+                            officialKey = derivedKey ?? officialEntry.key;
 
-                                if (useOfficial && existingKeys.has(officialKey)) {
-                                    useOfficial = false;
-                                    keyCollisionCount++;
-                                }
+                            if (officialKey !== originalKey) {
+                                const keyReplacementMode = config.customization.behaviors.keyReplacement.mode;
 
-                                if (useOfficial) {
-                                    existingKeys.delete(entry.key);
-                                    existingKeys.add(officialKey);
-                                    if (officialFormatMode === 'raw') {
-                                        officialText = replaceEntryKeyRaw(officialText, officialKey);
-                                    } else {
-                                        officialEntry.key = officialKey;
-                                        officialText = serializeBibEntry(officialEntry, '  ');
-                                    }
-                                    shouldAppendOldKeyComment = true;
-                                    keyReplacedCount++;
-                                } else {
-                                    if (officialFormatMode === 'raw') {
-                                        if (entry.key !== officialEntry.key) {
-                                            officialText = replaceEntryKeyRaw(officialText, entry.key);
-                                        }
-                                    } else {
-                                        officialEntry.key = entry.key;
-                                        officialText = serializeBibEntry(officialEntry, '  ');
-                                    }
+                                if (keyReplacementMode === 'keep-and-comment-official' || keyReplacementMode === 'keep-only') {
+                                    // Always keep original key in these modes
+                                    targetKey = originalKey;
+                                    needsKeyComment = (keyReplacementMode === 'keep-and-comment-official');
                                     keyPreservedCount++;
+                                } else if (keyReplacementMode === 'replace-only' || keyReplacementMode === 'replace-and-comment-old') {
+                                    // replace modes: use keyPolicy to decide
+                                    let useOfficial = false;
+                                    if (keyPolicy === 'officialAlways') {
+                                        useOfficial = true;
+                                    } else if (keyPolicy === 'officialWhenUnused') {
+                                        useOfficial = usedKeys ? !usedKeys.has(originalKey) : false;
+                                    }
+
+                                    if (useOfficial && existingKeys.has(officialKey)) {
+                                        useOfficial = false;
+                                        keyCollisionCount++;
+                                    }
+
+                                    if (useOfficial) {
+                                        existingKeys.delete(originalKey);
+                                        existingKeys.add(officialKey);
+                                        targetKey = officialKey;
+                                        needsKeyComment = (keyReplacementMode === 'replace-and-comment-old');
+                                        keyReplacedCount++;
+                                    } else {
+                                        targetKey = originalKey;
+                                        keyPreservedCount++;
+                                    }
+                                }
+
+                                // Apply the target key to the entry
+                                if (officialFormatMode === 'raw') {
+                                    officialText = replaceEntryKeyRaw(officialText, targetKey);
+                                } else {
+                                    officialEntry.key = targetKey;
+                                    officialText = serializeBibEntry(officialEntry, '  ');
                                 }
                             } else {
                                 keyPreservedCount++;
@@ -1698,13 +1779,27 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
 
                         if (officialFormatMode === 'normalized') {
                             formatted = formatBibEntryLocalWithOptions(officialText, localOptions);
-                            if (shouldAppendOldKeyComment) {
-                                formatted = appendKeyComment(formatted, entry.key);
+                            if (needsKeyComment && officialKey !== originalKey) {
+                                const keyReplacementOptions: KeyReplacementOptions = {
+                                    mode: config.customization.behaviors.keyReplacement.mode,
+                                    commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
+                                    originalKey: originalKey,
+                                    officialKey: officialKey,
+                                };
+                                formatted = applyKeyReplacement(formatted, keyReplacementOptions);
                             }
                         } else {
-                            formatted = shouldAppendOldKeyComment
-                                ? appendKeyComment(officialText, entry.key)
-                                : officialText;
+                            if (needsKeyComment && officialKey !== originalKey) {
+                                const keyReplacementOptions: KeyReplacementOptions = {
+                                    mode: config.customization.behaviors.keyReplacement.mode,
+                                    commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
+                                    originalKey: originalKey,
+                                    officialKey: officialKey,
+                                };
+                                formatted = applyKeyReplacement(officialText, keyReplacementOptions);
+                            } else {
+                                formatted = officialText;
+                            }
                         }
                         officialCount++;
                     }
@@ -1715,33 +1810,54 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
                     const parsedEntry = parseSingleEntry(entry.rawText);
                     if (parsedEntry && parsedEntry.fields.doi) {
                         const derivedKey = deriveKeyFromDoi(parsedEntry.fields.doi);
-                        if (derivedKey && derivedKey !== entry.key) {
-                            let useOfficial = false;
-                            if (keyPolicy === 'officialAlways') {
-                                useOfficial = true;
-                            } else if (keyPolicy === 'officialWhenUnused') {
-                                useOfficial = usedKeys ? !usedKeys.has(entry.key) : false;
-                            }
+                        if (derivedKey && derivedKey !== originalKey) {
+                            const keyReplacementMode = config.customization.behaviors.keyReplacement.mode;
+                            let needsKeyCommentLocal = false;
 
-                            if (useOfficial && existingKeys.has(derivedKey)) {
-                                useOfficial = false;
-                                keyCollisionCount++;
-                            }
-
-                            if (useOfficial) {
-                                existingKeys.delete(entry.key);
-                                existingKeys.add(derivedKey);
-                                parsedEntry.key = derivedKey;
-                                shouldAppendOldKeyComment = true;
-                                keyReplacedCount++;
-                            } else {
+                            if (keyReplacementMode === 'keep-and-comment-official' || keyReplacementMode === 'keep-only') {
+                                // Always keep original key in these modes
+                                targetKey = originalKey;
+                                officialKey = derivedKey;
+                                needsKeyCommentLocal = (keyReplacementMode === 'keep-and-comment-official');
                                 keyPreservedCount++;
+                            } else if (keyReplacementMode === 'replace-only' || keyReplacementMode === 'replace-and-comment-old') {
+                                // replace modes: use keyPolicy to decide
+                                let useOfficial = false;
+                                if (keyPolicy === 'officialAlways') {
+                                    useOfficial = true;
+                                } else if (keyPolicy === 'officialWhenUnused') {
+                                    useOfficial = usedKeys ? !usedKeys.has(originalKey) : false;
+                                }
+
+                                if (useOfficial && existingKeys.has(derivedKey)) {
+                                    useOfficial = false;
+                                    keyCollisionCount++;
+                                }
+
+                                if (useOfficial) {
+                                    existingKeys.delete(originalKey);
+                                    existingKeys.add(derivedKey);
+                                    targetKey = derivedKey;
+                                    officialKey = derivedKey;
+                                    needsKeyCommentLocal = (keyReplacementMode === 'replace-and-comment-old');
+                                    keyReplacedCount++;
+                                } else {
+                                    targetKey = originalKey;
+                                    keyPreservedCount++;
+                                }
                             }
-                            
+
+                            parsedEntry.key = targetKey;
                             formatted = serializeBibEntry(parsedEntry, '  ');
                             formatted = formatBibEntryLocalWithOptions(formatted, localOptions);
-                            if (shouldAppendOldKeyComment) {
-                                formatted = appendKeyComment(formatted, entry.key);
+                            if (needsKeyCommentLocal && officialKey !== originalKey) {
+                                const keyReplacementOptions: KeyReplacementOptions = {
+                                    mode: config.customization.behaviors.keyReplacement.mode,
+                                    commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
+                                    originalKey: originalKey,
+                                    officialKey: officialKey,
+                                };
+                                formatted = applyKeyReplacement(formatted, keyReplacementOptions);
                             }
                         } else {
                             formatted = formatBibEntryLocalWithOptions(entry.rawText, localOptions);
@@ -2059,6 +2175,32 @@ async function handleShowHistory(): Promise<void> {
 }
 
 /**
+ * Update menu visibility based on configuration
+ */
+async function updateMenuVisibility(): Promise<void> {
+    const config = getConfig();
+    const visibility = config.customization.featureVisibility;
+
+    // Set context keys for menu visibility
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFix', visibility.smartFix);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showValidate', visibility.validate);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showHistory', visibility.history);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showAdvancedMenu', visibility.advancedMenu);
+
+    // Advanced menu items
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFixAll', visibility.advanced.smartFixAll);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFixAllOfficialRaw', visibility.advanced.smartFixAllOfficialRaw);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showOfficialReport', visibility.advanced.officialReport);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showRemoveDuplicates', visibility.advanced.removeDuplicates);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showFindUnusedCitations', visibility.advanced.findUnusedCitations);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showFormatEntryLocal', visibility.advanced.formatEntryLocal);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showFormatEntryAI', visibility.advanced.formatEntryAI);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFixOfficialRaw', visibility.advanced.smartFixOfficialRaw);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showFormatAllEntriesLocal', visibility.advanced.formatAllEntriesLocal);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showFormatAllEntriesAI', visibility.advanced.formatAllEntriesAI);
+}
+
+/**
  * 插件激活时调用
  */
 export function activate(context: vscode.ExtensionContext): void {
@@ -2072,12 +2214,26 @@ export function activate(context: vscode.ExtensionContext): void {
     formatter = initFormatter();
     changeHistory = new ChangeHistory(context);
 
+    // 初始化工作流管理器
+    workflowManager = new WorkflowManager();
+    const initialConfig = getConfig();
+    workflowManager.registerWorkflowCommands(context, initialConfig.customization.workflows);
+
+    // 初始化菜单可见性
+    updateMenuVisibility();
+
     // 注册配置变化监听 (Req 4.7)
-    const configDisposable = onConfigChange((config) => {
+    const configDisposable = onConfigChange((updatedConfig) => {
         if (formatter) {
-            formatter.updateConfig(config);
+            formatter.updateConfig(updatedConfig);
         } else {
             formatter = initFormatter();
+        }
+        // 更新菜单可见性
+        updateMenuVisibility();
+        // 重新注册工作流命令
+        if (workflowManager) {
+            workflowManager.registerWorkflowCommands(context, updatedConfig.customization.workflows);
         }
     });
     context.subscriptions.push(configDisposable);
@@ -2181,17 +2337,17 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     // 启动时检查配置 (Req 5.2)
-    const config = getConfig();
-    logInfo(`Config: provider=${config.aiProvider}, hasApiKey=${config.aiProvider === 'groq' ? Boolean(config.groqApiKey) : Boolean(config.apiKey)}`);
-    const hasValidApiKey = config.aiProvider === 'groq' 
-        ? !!config.groqApiKey 
-        : !!config.apiKey;
-    
+    const startupConfig = getConfig();
+    logInfo(`Config: provider=${startupConfig.aiProvider}, hasApiKey=${startupConfig.aiProvider === 'groq' ? Boolean(startupConfig.groqApiKey) : Boolean(startupConfig.apiKey)}`);
+    const hasValidApiKey = startupConfig.aiProvider === 'groq'
+        ? !!startupConfig.groqApiKey
+        : !!startupConfig.apiKey;
+
     if (!hasValidApiKey) {
-        const settingKey = config.aiProvider === 'groq' 
-            ? 'referenceManager.groqApiKey' 
+        const settingKey = startupConfig.aiProvider === 'groq'
+            ? 'referenceManager.groqApiKey'
             : 'referenceManager.apiKey';
-        
+
         vscode.window.showInformationMessage(
             'Reference Manager Pro: 智能增强未启用，Smart Fix 将使用本地模式',
             '启用智能增强'
@@ -2213,5 +2369,8 @@ export function deactivate(): void {
     console.log('Reference Manager Pro is now deactivated.');
     if (outputChannel) {
         outputChannel.dispose();
+    }
+    if (workflowManager) {
+        workflowManager.dispose();
     }
 }

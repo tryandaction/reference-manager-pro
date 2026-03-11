@@ -139,55 +139,65 @@
       "editor/context": [
         {
           "command": "referenceManager.smartFix",
-          "when": "editorLangId == bibtex",
+          "when": "editorLangId == bibtex && referenceManager.showSmartFix",
           "group": "referenceManager@1"
         },
         {
           "command": "referenceManager.validateEntries",
-          "when": "editorLangId == bibtex",
+          "when": "editorLangId == bibtex && referenceManager.showValidate",
           "group": "referenceManager@2"
         },
         {
           "command": "referenceManager.showHistory",
-          "when": "editorLangId == bibtex",
+          "when": "editorLangId == bibtex && referenceManager.showHistory",
           "group": "referenceManager@3"
         },
         {
           "submenu": "referenceManager.advancedMenu",
-          "when": "editorLangId == bibtex",
+          "when": "editorLangId == bibtex && referenceManager.showAdvancedMenu",
           "group": "referenceManager@4"
         }
       ],
       "referenceManager.advancedMenu": [
         {
-          "command": "referenceManager.smartFixAll"
+          "command": "referenceManager.smartFixAll",
+          "when": "referenceManager.showSmartFixAll"
         },
         {
-          "command": "referenceManager.smartFixAllOfficialRaw"
+          "command": "referenceManager.smartFixAllOfficialRaw",
+          "when": "referenceManager.showSmartFixAllOfficialRaw"
         },
         {
-          "command": "referenceManager.officialReport"
+          "command": "referenceManager.officialReport",
+          "when": "referenceManager.showOfficialReport"
         },
         {
-          "command": "referenceManager.removeDuplicates"
+          "command": "referenceManager.removeDuplicates",
+          "when": "referenceManager.showRemoveDuplicates"
         },
         {
-          "command": "referenceManager.findUnusedCitations"
+          "command": "referenceManager.findUnusedCitations",
+          "when": "referenceManager.showFindUnusedCitations"
         },
         {
-          "command": "referenceManager.formatEntryLocal"
+          "command": "referenceManager.formatEntryLocal",
+          "when": "referenceManager.showFormatEntryLocal"
         },
         {
-          "command": "referenceManager.formatEntry"
+          "command": "referenceManager.formatEntry",
+          "when": "referenceManager.showFormatEntryAI"
         },
         {
-          "command": "referenceManager.smartFixOfficialRaw"
+          "command": "referenceManager.smartFixOfficialRaw",
+          "when": "referenceManager.showSmartFixOfficialRaw"
         },
         {
-          "command": "referenceManager.formatAllEntriesLocal"
+          "command": "referenceManager.formatAllEntriesLocal",
+          "when": "referenceManager.showFormatAllEntriesLocal"
         },
         {
-          "command": "referenceManager.formatAllEntries"
+          "command": "referenceManager.formatAllEntries",
+          "when": "referenceManager.showFormatAllEntriesAI"
         }
       ]
     },
@@ -354,6 +364,211 @@
             "Official BibTeX raw output (no local normalization)"
           ],
           "description": "Official metadata formatting mode"
+        },
+        "referenceManager.customization.featureVisibility.smartFix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Smart Fix in context menu"
+        },
+        "referenceManager.customization.featureVisibility.validate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Validate References in context menu"
+        },
+        "referenceManager.customization.featureVisibility.history": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show History in context menu"
+        },
+        "referenceManager.customization.featureVisibility.advancedMenu": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Advanced submenu in context menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.smartFixAll": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Smart Fix All in advanced menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.smartFixAllOfficialRaw": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Smart Fix All (Official Raw) in advanced menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.officialReport": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Official Report in advanced menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.removeDuplicates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Remove Duplicates in advanced menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.findUnusedCitations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Find Unused Citations in advanced menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.formatEntryLocal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Format Entry (Local) in advanced menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.formatEntryAI": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Format Entry (AI) in advanced menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.smartFixOfficialRaw": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Smart Fix (Official Raw) in advanced menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.formatAllEntriesLocal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Format All Entries (Local) in advanced menu"
+        },
+        "referenceManager.customization.featureVisibility.advanced.formatAllEntriesAI": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Format All Entries (AI) in advanced menu"
+        },
+        "referenceManager.customization.behaviors.keyReplacement.mode": {
+          "type": "string",
+          "default": "replace-and-comment-old",
+          "enum": [
+            "replace-and-comment-old",
+            "keep-and-comment-official",
+            "replace-only",
+            "keep-only"
+          ],
+          "enumDescriptions": [
+            "替换为官方key，注释原key (例: @article{officialKey, % oldkey: originalKey)",
+            "保留原key，注释官方key (例: @article{originalKey, % official_key: officialKey)",
+            "仅替换为官方key，不添加注释 (例: @article{officialKey,)",
+            "仅保留原key，不添加注释 (例: @article{originalKey,)"
+          ],
+          "description": "当找到官方元数据时如何处理引用key"
+        },
+        "referenceManager.customization.behaviors.keyReplacement.commentPrefix": {
+          "type": "string",
+          "default": "% oldkey:",
+          "description": "Comment prefix for preserved key (e.g., '% oldkey:' or '% official_key:')"
+        },
+        "referenceManager.customization.behaviors.smartFix.operationOrder": {
+          "type": "array",
+          "default": ["official", "ai", "local"],
+          "items": {
+            "type": "string",
+            "enum": ["official", "ai", "local"]
+          },
+          "description": "Order of operations to try in Smart Fix"
+        },
+        "referenceManager.customization.behaviors.smartFix.enableFallback": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fallback to next operation if current one fails"
+        },
+        "referenceManager.customization.behaviors.smartFix.showDetailedSummary": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show detailed summary after Smart Fix operation"
+        },
+        "referenceManager.customization.behaviors.smartFix.autoValidate": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically validate after Smart Fix"
+        },
+        "referenceManager.customization.behaviors.duplicateRemoval.keepStrategy": {
+          "type": "string",
+          "default": "most-complete",
+          "enum": [
+            "first",
+            "last",
+            "most-complete",
+            "ask-user"
+          ],
+          "enumDescriptions": [
+            "Keep the first occurrence",
+            "Keep the last occurrence",
+            "Keep the entry with most complete information",
+            "Ask user which to keep"
+          ],
+          "description": "Strategy for choosing which duplicate entry to keep"
+        },
+        "referenceManager.customization.behaviors.duplicateRemoval.maxEntries": {
+          "type": "number",
+          "default": 100,
+          "minimum": 10,
+          "maximum": 10000,
+          "description": "Maximum number of entries to process (safety limit)"
+        },
+        "referenceManager.customization.behaviors.validation.validateOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically validate references when saving .bib file"
+        },
+        "referenceManager.customization.behaviors.validation.showInlineDecorations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show validation decorations inline in editor"
+        },
+        "referenceManager.customization.workflows": {
+          "type": "array",
+          "default": [
+            {
+              "id": "optimize-all",
+              "name": "Optimize All",
+              "description": "Format, deduplicate, and validate all entries",
+              "steps": [
+                {"id": "format", "operation": "formatLocal", "continueOnError": false, "label": "Formatting entries..."},
+                {"id": "dedup", "operation": "removeDuplicates", "continueOnError": true, "label": "Removing duplicates..."},
+                {"id": "validate", "operation": "validate", "continueOnError": false, "label": "Validating entries..."}
+              ],
+              "scope": "file",
+              "showInMenu": true
+            }
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "name": {"type": "string"},
+              "description": {"type": "string"},
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {"type": "string"},
+                    "operation": {"type": "string", "enum": ["smartFix", "formatLocal", "formatAI", "validate", "removeDuplicates", "findUnused"]},
+                    "options": {"type": "object"},
+                    "continueOnError": {"type": "boolean"},
+                    "label": {"type": "string"}
+                  },
+                  "required": ["id", "operation", "continueOnError"]
+                }
+              },
+              "scope": {"type": "string", "enum": ["entry", "file", "workspace"]},
+              "showInMenu": {"type": "boolean"},
+              "keybinding": {"type": "string"}
+            },
+            "required": ["id", "name", "description", "steps", "scope", "showInMenu"]
+          },
+          "description": "Custom workflow definitions for multi-step operations"
+        },
+        "referenceManager.customization.menuOrganization.groupOrder": {
+          "type": "array",
+          "default": ["primary", "validation", "history", "workflows", "advanced"],
+          "items": {"type": "string"},
+          "description": "Order of groups in context menu"
+        },
+        "referenceManager.customization.menuOrganization.showIcons": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show icons in context menu"
         }
       }
     }

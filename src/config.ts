@@ -38,6 +38,8 @@ export interface ExtensionConfig {
     validation: ValidationConfig;
     /** 官方元数据配置 */
     officialMetadata: OfficialMetadataConfig;
+    /** 定制化配置 */
+    customization: CustomizationConfig;
 }
 
 export interface LocalFormatConfig {
@@ -65,6 +67,162 @@ export interface OfficialMetadataConfig {
 
 export type OfficialKeyPolicy = 'preserve' | 'officialWhenUnused' | 'officialAlways';
 export type OfficialFormatMode = 'raw' | 'normalized';
+
+// ============ Customization System Types ============
+
+/**
+ * Key replacement mode
+ * - replace-and-comment-old: Replace key with official key, comment out old key
+ * - keep-and-comment-official: Keep original key, add official key as comment
+ */
+export type KeyReplacementMode =
+    | 'replace-and-comment-old'      // 替换为官方key，注释原key
+    | 'keep-and-comment-official'    // 保留原key，注释官方key
+    | 'replace-only'                 // 仅替换为官方key，不添加注释
+    | 'keep-only';                   // 仅保留原key，不添加注释
+
+/**
+ * Duplicate removal strategy
+ */
+export type DuplicateKeepStrategy = 'first' | 'last' | 'most-complete' | 'ask-user';
+
+/**
+ * Feature visibility configuration
+ */
+export interface FeatureVisibilityConfig {
+    /** Show Smart Fix in context menu */
+    smartFix: boolean;
+    /** Show Validate References in context menu */
+    validate: boolean;
+    /** Show History in context menu */
+    history: boolean;
+    /** Show Advanced submenu */
+    advancedMenu: boolean;
+    /** Advanced menu items visibility */
+    advanced: {
+        smartFixAll: boolean;
+        smartFixAllOfficialRaw: boolean;
+        officialReport: boolean;
+        removeDuplicates: boolean;
+        findUnusedCitations: boolean;
+        formatEntryLocal: boolean;
+        formatEntryAI: boolean;
+        smartFixOfficialRaw: boolean;
+        formatAllEntriesLocal: boolean;
+        formatAllEntriesAI: boolean;
+    };
+}
+
+/**
+ * Key replacement behavior configuration
+ */
+export interface KeyReplacementBehavior {
+    /** How to handle key replacement when using official metadata */
+    mode: KeyReplacementMode;
+    /** Comment prefix for the preserved key */
+    commentPrefix: string;
+}
+
+/**
+ * Smart Fix behavior configuration
+ */
+export interface SmartFixBehavior {
+    /** Order of operations to try */
+    operationOrder: Array<'official' | 'ai' | 'local'>;
+    /** Whether to fallback to next operation on failure */
+    enableFallback: boolean;
+    /** Show detailed summary after operation */
+    showDetailedSummary: boolean;
+    /** Auto-validate after fix */
+    autoValidate: boolean;
+}
+
+/**
+ * Duplicate removal behavior configuration
+ */
+export interface DuplicateRemovalBehavior {
+    /** Strategy for choosing which entry to keep */
+    keepStrategy: DuplicateKeepStrategy;
+    /** Maximum entries to process (safety limit) */
+    maxEntries: number;
+}
+
+/**
+ * Validation behavior configuration
+ */
+export interface ValidationBehavior {
+    /** Auto-validate on file save */
+    validateOnSave: boolean;
+    /** Show validation decorations in editor */
+    showInlineDecorations: boolean;
+}
+
+/**
+ * Workflow step definition
+ */
+export interface WorkflowStep {
+    /** Step identifier */
+    id: string;
+    /** Operation to execute */
+    operation: 'smartFix' | 'formatLocal' | 'formatAI' | 'validate' | 'removeDuplicates' | 'findUnused';
+    /** Operation-specific options */
+    options?: Record<string, any>;
+    /** Continue on error */
+    continueOnError: boolean;
+    /** Custom label for progress display */
+    label?: string;
+}
+
+/**
+ * Workflow definition
+ */
+export interface WorkflowDefinition {
+    /** Workflow unique ID */
+    id: string;
+    /** Display name */
+    name: string;
+    /** Description */
+    description: string;
+    /** Steps to execute in order */
+    steps: WorkflowStep[];
+    /** Scope: single entry or all entries */
+    scope: 'entry' | 'file' | 'workspace';
+    /** Show in context menu */
+    showInMenu: boolean;
+    /** Keyboard shortcut (optional) */
+    keybinding?: string;
+}
+
+/**
+ * Menu organization configuration
+ */
+export interface MenuOrganizationConfig {
+    /** Group order in context menu */
+    groupOrder: string[];
+    /** Custom group labels */
+    groupLabels: Record<string, string>;
+    /** Show icons in menu */
+    showIcons: boolean;
+}
+
+/**
+ * Customization configuration
+ */
+export interface CustomizationConfig {
+    /** Feature visibility toggles */
+    featureVisibility: FeatureVisibilityConfig;
+    /** Feature-specific behaviors */
+    behaviors: {
+        keyReplacement: KeyReplacementBehavior;
+        smartFix: SmartFixBehavior;
+        duplicateRemoval: DuplicateRemovalBehavior;
+        validation: ValidationBehavior;
+    };
+    /** Custom workflow definitions */
+    workflows: WorkflowDefinition[];
+    /** Menu organization preferences */
+    menuOrganization: MenuOrganizationConfig;
+}
 
 /**
  * 配置项的键名常量
@@ -105,6 +263,14 @@ export const CONFIG_KEYS = {
     OFFICIAL_METADATA_KEY_POLICY: 'officialMetadata.keyPolicy',
     /** 官方元数据 - 格式模式 */
     OFFICIAL_METADATA_FORMAT_MODE: 'officialMetadata.formatMode',
+    /** 定制化 - 功能可见性 */
+    CUSTOMIZATION_FEATURE_VISIBILITY: 'customization.featureVisibility',
+    /** 定制化 - 行为配置 */
+    CUSTOMIZATION_BEHAVIORS: 'customization.behaviors',
+    /** 定制化 - 工作流 */
+    CUSTOMIZATION_WORKFLOWS: 'customization.workflows',
+    /** 定制化 - 菜单组织 */
+    CUSTOMIZATION_MENU_ORGANIZATION: 'customization.menuOrganization',
 } as const;
 
 /**
@@ -134,6 +300,71 @@ export const DEFAULT_CONFIG: ExtensionConfig = {
         keyPolicy: 'officialAlways',
         formatMode: 'normalized',
     },
+    customization: {
+        featureVisibility: {
+            smartFix: true,
+            validate: true,
+            history: true,
+            advancedMenu: true,
+            advanced: {
+                smartFixAll: true,
+                smartFixAllOfficialRaw: true,
+                officialReport: true,
+                removeDuplicates: true,
+                findUnusedCitations: true,
+                formatEntryLocal: true,
+                formatEntryAI: true,
+                smartFixOfficialRaw: true,
+                formatAllEntriesLocal: true,
+                formatAllEntriesAI: true,
+            },
+        },
+        behaviors: {
+            keyReplacement: {
+                mode: 'replace-and-comment-old',
+                commentPrefix: '% oldkey:',
+            },
+            smartFix: {
+                operationOrder: ['official', 'ai', 'local'],
+                enableFallback: true,
+                showDetailedSummary: true,
+                autoValidate: false,
+            },
+            duplicateRemoval: {
+                keepStrategy: 'most-complete',
+                maxEntries: 100,
+            },
+            validation: {
+                validateOnSave: false,
+                showInlineDecorations: true,
+            },
+        },
+        workflows: [
+            {
+                id: 'optimize-all',
+                name: 'Optimize All',
+                description: 'Format, deduplicate, and validate all entries',
+                steps: [
+                    { id: 'format', operation: 'formatLocal', continueOnError: false, label: 'Formatting entries...' },
+                    { id: 'dedup', operation: 'removeDuplicates', continueOnError: true, label: 'Removing duplicates...' },
+                    { id: 'validate', operation: 'validate', continueOnError: false, label: 'Validating entries...' },
+                ],
+                scope: 'file',
+                showInMenu: true,
+            },
+        ],
+        menuOrganization: {
+            groupOrder: ['primary', 'validation', 'history', 'workflows', 'advanced'],
+            groupLabels: {
+                primary: 'Quick Actions',
+                validation: 'Quality',
+                history: 'History',
+                workflows: 'Workflows',
+                advanced: 'Advanced',
+            },
+            showIcons: true,
+        },
+    },
 };
 
 /**
@@ -150,6 +381,12 @@ export const DEFAULT_CONFIG: ExtensionConfig = {
 export function getConfig(): ExtensionConfig {
     // 获取referenceManager配置节
     const config = vscode.workspace.getConfiguration(CONFIG_KEYS.SECTION);
+
+    // Get customization config with migration
+    const customizationConfig = config.get<CustomizationConfig>(
+        'customization',
+        DEFAULT_CONFIG.customization
+    );
 
     return {
         aiProvider: config.get<AIProvider>(CONFIG_KEYS.AI_PROVIDER, DEFAULT_CONFIG.aiProvider),
@@ -201,6 +438,7 @@ export function getConfig(): ExtensionConfig {
                 DEFAULT_CONFIG.officialMetadata.formatMode
             ),
         },
+        customization: migrateCustomizationConfig(customizationConfig),
     };
 }
 
@@ -295,3 +533,108 @@ export function onConfigChange(
         }
     });
 }
+
+/**
+ * Migrate customization config to ensure all required fields exist
+ * Provides backward compatibility for users upgrading from older versions
+ *
+ * @param config Customization config from settings (may be incomplete)
+ * @returns Complete CustomizationConfig with all required fields
+ */
+export function migrateCustomizationConfig(config: Partial<CustomizationConfig> | undefined): CustomizationConfig {
+    if (!config) {
+        return DEFAULT_CONFIG.customization;
+    }
+
+    // Deep merge with defaults
+    return {
+        featureVisibility: {
+            ...DEFAULT_CONFIG.customization.featureVisibility,
+            ...config.featureVisibility,
+            advanced: {
+                ...DEFAULT_CONFIG.customization.featureVisibility.advanced,
+                ...config.featureVisibility?.advanced,
+            },
+        },
+        behaviors: {
+            keyReplacement: {
+                ...DEFAULT_CONFIG.customization.behaviors.keyReplacement,
+                ...config.behaviors?.keyReplacement,
+            },
+            smartFix: {
+                ...DEFAULT_CONFIG.customization.behaviors.smartFix,
+                ...config.behaviors?.smartFix,
+            },
+            duplicateRemoval: {
+                ...DEFAULT_CONFIG.customization.behaviors.duplicateRemoval,
+                ...config.behaviors?.duplicateRemoval,
+            },
+            validation: {
+                ...DEFAULT_CONFIG.customization.behaviors.validation,
+                ...config.behaviors?.validation,
+            },
+        },
+        workflows: config.workflows || DEFAULT_CONFIG.customization.workflows,
+        menuOrganization: {
+            ...DEFAULT_CONFIG.customization.menuOrganization,
+            ...config.menuOrganization,
+            groupLabels: {
+                ...DEFAULT_CONFIG.customization.menuOrganization.groupLabels,
+                ...config.menuOrganization?.groupLabels,
+            },
+        },
+    };
+}
+
+/**
+ * Check if user needs to migrate from old config format
+ *
+ * @returns boolean True if migration is needed
+ */
+export function needsConfigMigration(): boolean {
+    const config = vscode.workspace.getConfiguration(CONFIG_KEYS.SECTION);
+    const customization = config.get<CustomizationConfig>('customization');
+    return !customization;
+}
+
+/**
+ * Prompt user to migrate configuration
+ *
+ * @returns Promise<boolean> True if user chose to migrate
+ */
+export async function promptConfigMigration(): Promise<boolean> {
+    const choice = await vscode.window.showInformationMessage(
+        'Reference Manager Pro has new customization features. Would you like to enable them with default settings?',
+        'Enable Now',
+        'Later',
+        'Learn More'
+    );
+
+    if (choice === 'Learn More') {
+        vscode.window.showInformationMessage(
+            'New features: Customize menu visibility, configure key replacement modes, create custom workflows, and more!'
+        );
+        return false;
+    }
+
+    return choice === 'Enable Now';
+}
+
+/**
+ * Perform automatic configuration migration
+ */
+export async function migrateUserConfig(): Promise<void> {
+    const config = vscode.workspace.getConfiguration(CONFIG_KEYS.SECTION);
+
+    // Write default customization config
+    await config.update(
+        'customization',
+        DEFAULT_CONFIG.customization,
+        vscode.ConfigurationTarget.Global
+    );
+
+    vscode.window.showInformationMessage(
+        '✅ Customization features enabled! Check settings to configure.'
+    );
+}
+

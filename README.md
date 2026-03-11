@@ -97,7 +97,25 @@ When the key is replaced, the old key is preserved as a comment on the entry hea
 - **Upgrade to Pro**: Purchase a license at [Gumroad](https://gumroad.com/l/reference-manager-pro) for unlimited AI features
 - **Use Local Format**: When offline or to save API calls, use the local formatting option
 
+## 📚 Documentation
+
+- [Quick Start Guide](docs/guides/QUICK_START.md)
+- [Key Replacement Guide](docs/guides/KEY_REPLACEMENT_GUIDE.md) - 四种 Citation Key 替换模式详解
+- [Test Guide](docs/guides/TEST_GUIDE.md)
+- [Release Notes](docs/releases/)
+
 ## 📝 Changelog
+
+### v0.3.5 (Latest)
+- **新增两种 Key 替换模式**：`replace-only`（仅替换，无注释）和 `keep-only`（仅保留，无注释）
+- **修复 Bug**：`keep-and-comment-official` 模式现在正确工作（之前会错误地替换 key）
+- **四种模式**：完整支持所有 Citation Key 处理场景
+- 详见 [Release Notes v0.3.5](docs/releases/RELEASE_NOTES_v0.3.5.md)
+
+### v0.3.4
+- **自定义功能**：菜单可见性控制、工作流系统、行为配置
+- **Key 替换模式**：支持 `replace-and-comment-old` 和 `keep-and-comment-official`
+- 详见 [Release Notes v0.3.4](docs/releases/RELEASE_NOTES_v0.3.4.md)
 
 ### v0.3.0
 - **批量官方修复大幅增强**：Citation Key 生成支持所有主流期刊（覆盖率从 ~10% 提升到 ~100%）
