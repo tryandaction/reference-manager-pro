@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import { AIFormatter, AIError } from './aiFormatter';
 import { parseBibFile, parseSingleEntry, serializeBibEntry, BibEntry, getEntryDescription } from './bibParser';
 import { scanWorkspaceForCitations, findBibFiles, findTexFiles } from './citationScanner';
-import { getConfig, ensureConfigured, onConfigChange, OfficialKeyPolicy, OfficialFormatMode } from './config';
+import { getConfig, ensureConfigured, onConfigChange, OfficialFormatMode } from './config';
 import { ChangeHistory } from './changeHistory';
 import { validateEntries, EntryValidationResult } from './metadataValidator';
 import { resolveOfficialBibtexFromEntry, extractDoiFromEntryText } from './metadataResolver';
@@ -26,6 +26,10 @@ import {
     trackSuccessAndMaybeRequestRating
 } from './license';
 import { formatBibEntryLocalWithOptions } from './localFormatter';
+import { applyKeyHandlingToEntry, keyHandlingNeedsWorkspaceScan, resolveKeyHandlingDecision } from './keyHandling';
+import { getContextMenuPinVisibility, type ActionRegistryContext } from './ui/actionRegistry';
+import { openCommandCenter as showCommandCenter } from './ui/commandCenter';
+import { ValidationDecorationsController } from './validationDecorations';
 import { WorkflowManager } from './workflow/workflowManager';
 
 /** AI格式化器实例 */
@@ -39,6 +43,9 @@ let changeHistory: ChangeHistory | null = null;
 
 /** 工作流管理器 */
 let workflowManager: WorkflowManager | null = null;
+
+/** 校验装饰控制器 */
+let validationDecorations: ValidationDecorationsController | null = null;
 
 interface ChangeMeta {
     source?: 'local' | 'ai' | 'official' | 'system';
@@ -56,6 +63,35 @@ interface DuplicatePair {
 
 /** 避免在巨大 .bib 文件上做 O(n^2) 的 AI 去重比较 */
 const MAX_DUPLICATE_ENTRIES = 80;
+
+function getEntryCompletenessScore(entry: BibEntry): number {
+    return Object.values(entry.fields).filter(value => Boolean(value && value.trim())).length;
+}
+
+function chooseDuplicateKeepEntry(
+    entry1: BibEntry,
+    entry2: BibEntry,
+    aiSuggestion: 'entry1' | 'entry2'
+): { keepEntry: 'entry1' | 'entry2'; reasonSuffix?: string } {
+    const strategy = getConfig().cleanup.duplicateKeepStrategy;
+    if (strategy === 'first') {
+        return { keepEntry: 'entry1', reasonSuffix: '已按 cleanup.duplicateKeepStrategy=first 覆盖 AI 建议' };
+    }
+    if (strategy === 'last') {
+        return { keepEntry: 'entry2', reasonSuffix: '已按 cleanup.duplicateKeepStrategy=last 覆盖 AI 建议' };
+    }
+    if (strategy === 'most-complete') {
+        const score1 = getEntryCompletenessScore(entry1);
+        const score2 = getEntryCompletenessScore(entry2);
+        if (score1 > score2) {
+            return { keepEntry: 'entry1', reasonSuffix: '已按 cleanup.duplicateKeepStrategy=most-complete 选择更完整的条目' };
+        }
+        if (score2 > score1) {
+            return { keepEntry: 'entry2', reasonSuffix: '已按 cleanup.duplicateKeepStrategy=most-complete 选择更完整的条目' };
+        }
+    }
+    return { keepEntry: aiSuggestion };
+}
 
 function buildFormattedBibFileContent(
     content: string,
@@ -262,60 +298,6 @@ function deriveKeyFromDoi(doi: string): string | null {
     return `DOI:${trimmed.replace(/\//g, ':')}`;
 }
 
-function appendKeyComment(entryText: string, oldKey: string, prefix: string = '% oldkey:'): string {
-    const lines = entryText.split('\n');
-    if (lines.length === 0) {
-        return entryText;
-    }
-    const firstLine = lines[0] ?? '';
-    // Check if comment already exists
-    if (firstLine.includes(prefix)) {
-        return entryText;
-    }
-    lines[0] = `${firstLine} ${prefix} ${oldKey}`;
-    return lines.join('\n');
-}
-
-function appendOfficialKeyComment(entryText: string, officialKey: string, prefix: string = '% official_key:'): string {
-    const lines = entryText.split('\n');
-    if (lines.length === 0) {
-        return entryText;
-    }
-    const firstLine = lines[0] ?? '';
-    // Check if comment already exists
-    if (firstLine.includes(prefix)) {
-        return entryText;
-    }
-    lines[0] = `${firstLine} ${prefix} ${officialKey}`;
-    return lines.join('\n');
-}
-
-interface KeyReplacementOptions {
-    mode: 'replace-and-comment-old' | 'keep-and-comment-official' | 'replace-only' | 'keep-only';
-    commentPrefix: string;
-    originalKey: string;
-    officialKey: string;
-}
-
-function applyKeyReplacement(entryText: string, options: KeyReplacementOptions): string {
-    const { mode, commentPrefix, originalKey, officialKey } = options;
-
-    if (mode === 'replace-and-comment-old') {
-        // Replace key with official key, add comment with old key
-        const replaced = replaceEntryKeyRaw(entryText, officialKey);
-        return appendKeyComment(replaced, originalKey, commentPrefix);
-    } else if (mode === 'keep-and-comment-official') {
-        // Keep original key, add comment with official key
-        return appendOfficialKeyComment(entryText, officialKey, commentPrefix);
-    } else if (mode === 'replace-only') {
-        // Replace key with official key, no comment
-        return replaceEntryKeyRaw(entryText, officialKey);
-    } else {
-        // keep-only: Keep original key, no comment (return as-is)
-        return entryText;
-    }
-}
-
 function replaceEntryKeyRaw(entryText: string, newKey: string): string {
     const entryStart = /^(\s*@\w+\s*\{)\s*[^,\s]+(\s*,)/m;
     if (!entryStart.test(entryText)) {
@@ -398,33 +380,17 @@ function buildOfficialReportMarkdown(
     return lines.join('\n');
 }
 
-async function resolveKeyPolicyDecision(
-    policy: OfficialKeyPolicy,
-    originalKey: string,
-    officialKey: string,
-    existingKeys: Set<string>
-): Promise<{ useOfficial: boolean; reason?: string; usedKeys?: Set<string> }> {
-    if (policy === 'preserve') {
-        return { useOfficial: false, reason: '保持原引用 key' };
+async function getWorkspaceUsedKeysForKeyHandling(): Promise<Set<string> | undefined> {
+    const mode = getConfig().keyHandling.mode;
+    if (!keyHandlingNeedsWorkspaceScan(mode)) {
+        return undefined;
     }
 
-    const canScan = Boolean(vscode.workspace.workspaceFolders);
-    const usedKeys = policy === 'officialWhenUnused' || policy === 'officialAlways'
-        ? (canScan ? await scanWorkspaceForCitations() : undefined)
-        : undefined;
-
-    if (policy === 'officialWhenUnused' && usedKeys?.has(originalKey)) {
-        return { useOfficial: false, reason: '原 key 已在 .tex 中使用', usedKeys };
-    }
-    if (policy === 'officialWhenUnused' && !usedKeys) {
-        return { useOfficial: false, reason: '未检测到工作区，保留原 key', usedKeys };
+    if (!vscode.workspace.workspaceFolders) {
+        return undefined;
     }
 
-    if (existingKeys.has(officialKey) && officialKey !== originalKey) {
-        return { useOfficial: false, reason: '官方 key 与现有条目冲突', usedKeys };
-    }
-
-    return { useOfficial: true, usedKeys };
+    return scanWorkspaceForCitations();
 }
 
 function buildEntryDiffSummary(
@@ -627,6 +593,91 @@ function getEntryTextAndRange(editor: vscode.TextEditor): { text: string; range:
     const startPos = doc.positionAt(hit.startIndex);
     const endPos = doc.positionAt(hit.endIndex + 1);
     return { text: hit.rawText, range: new vscode.Range(startPos, endPos) };
+}
+
+async function buildActionContext(): Promise<ActionRegistryContext> {
+    const config = getConfig();
+    const status = await getLicenseStatus();
+    return {
+        isBibtexEditor: vscode.window.activeTextEditor?.document.languageId === 'bibtex',
+        hasWorkspace: Boolean(vscode.workspace.workspaceFolders?.length),
+        hasHistory: Boolean(changeHistory && changeHistory.list().length > 0),
+        isPro: status.isPro,
+        ui: config.ui,
+        experimental: config.experimental,
+    };
+}
+
+async function handleOpenCommandCenter(): Promise<void> {
+    await showCommandCenter(
+        await buildActionContext(),
+        {
+            executeCommand: (commandId) => vscode.commands.executeCommand(commandId),
+        }
+    );
+}
+
+async function showSmartFixNextSteps(message: string): Promise<void> {
+    const action = await vscode.window.showInformationMessage(
+        message,
+        '检查这一条',
+        '检查整份文件',
+        '修整整份文件'
+    );
+
+    if (action === '检查这一条') {
+        await vscode.commands.executeCommand('referenceManager.validateEntry');
+        return;
+    }
+
+    if (action === '检查整份文件') {
+        await vscode.commands.executeCommand('referenceManager.validateEntries');
+        return;
+    }
+
+    if (action === '修整整份文件') {
+        await vscode.commands.executeCommand('referenceManager.quickSmartFixFile');
+    }
+}
+
+function refreshValidationDecorations(editor?: vscode.TextEditor): void {
+    if (!validationDecorations) {
+        return;
+    }
+
+    validationDecorations.schedule(editor ?? vscode.window.activeTextEditor, getConfig());
+}
+
+async function handleValidateOnSave(document: vscode.TextDocument): Promise<void> {
+    const config = getConfig();
+    if (
+        !config.validation.enabled ||
+        !config.quality.validateOnSave ||
+        document.languageId !== 'bibtex'
+    ) {
+        return;
+    }
+
+    const parsed = parseBibFile(document.getText());
+    if (parsed.entries.length === 0) {
+        return;
+    }
+
+    const results = validateEntries(parsed.entries, config.validation.strictness);
+    const errorCount = results.reduce(
+        (sum, result) => sum + result.issues.filter(issue => issue.severity === 'error').length,
+        0
+    );
+    const warningCount = results.reduce(
+        (sum, result) => sum + result.issues.filter(issue => issue.severity === 'warn').length,
+        0
+    );
+
+    if (errorCount > 0 || warningCount > 0) {
+        void vscode.window.showWarningMessage(
+            `Reference Manager: 保存后校验完成，error ${errorCount}，warn ${warningCount}`
+        );
+    }
 }
 
 /**
@@ -1189,13 +1240,16 @@ async function handleDuplicatesFound(
     }
 
     // 询问用户确认 (Req 3.4)
+    const strategy = getConfig().cleanup.duplicateKeepStrategy;
     const action = await vscode.window.showWarningMessage(
-        `发现 ${duplicates.length} 对重复条目，是否按AI建议删除重复项？`,
-        '按建议删除',
+        strategy === 'ask-user'
+            ? `发现 ${duplicates.length} 对重复条目，是否逐对确认保留项？`
+            : `发现 ${duplicates.length} 对重复条目，是否按当前策略删除重复项？`,
+        strategy === 'ask-user' ? '开始确认' : '按建议删除',
         '取消'
     );
 
-    if (action !== '按建议删除') {
+    if (action !== (strategy === 'ask-user' ? '开始确认' : '按建议删除')) {
         return;
     }
 
@@ -1206,7 +1260,31 @@ async function handleDuplicatesFound(
     // 收集要删除的条目
     const entriesToDelete: BibEntry[] = [];
     for (const dup of duplicates) {
-        const entryToDelete = dup.keepEntry === 'entry1' ? dup.entry2 : dup.entry1;
+        let keepEntry = dup.keepEntry;
+        if (strategy === 'ask-user') {
+            const picked = await vscode.window.showQuickPick([
+                {
+                    label: dup.entry1.key,
+                    description: getEntryDescription(dup.entry1),
+                    keepEntry: 'entry1' as const,
+                },
+                {
+                    label: dup.entry2.key,
+                    description: getEntryDescription(dup.entry2),
+                    keepEntry: 'entry2' as const,
+                },
+            ], {
+                placeHolder: `选择要保留的条目：${dup.entry1.key} vs ${dup.entry2.key}`,
+                matchOnDescription: true,
+            });
+
+            if (!picked) {
+                continue;
+            }
+            keepEntry = picked.keepEntry;
+        }
+
+        const entryToDelete = keepEntry === 'entry1' ? dup.entry2 : dup.entry1;
         entriesToDelete.push(entryToDelete);
     }
 
@@ -1310,11 +1388,18 @@ async function handleRemoveDuplicates(): Promise<void> {
                     );
 
                     if (checkResult.isDuplicate) {
+                        const chosen = chooseDuplicateKeepEntry(
+                            entry1,
+                            entry2,
+                            checkResult.keepEntry
+                        );
                         duplicates.push({
                             entry1,
                             entry2,
-                            keepEntry: checkResult.keepEntry,
-                            reason: checkResult.reason
+                            keepEntry: chosen.keepEntry,
+                            reason: chosen.reasonSuffix
+                                ? `${checkResult.reason}；${chosen.reasonSuffix}`
+                                : checkResult.reason
                         });
                     }
                 } catch (error) {
@@ -1370,9 +1455,9 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
     const validationEnabled = config.validation.enabled;
     const officialEnabled = config.officialMetadata.enabled;
     const officialTimeout = config.officialMetadata.timeout;
-    const keyPolicy = config.officialMetadata.keyPolicy;
     const officialFormatMode = options.officialFormatMode ?? config.officialMetadata.formatMode;
     const sourceNotes: string[] = [];
+    const usedKeys = await getWorkspaceUsedKeysForKeyHandling();
 
     const validateAndAnalyze = (text: string): { score: number | null; errorCount: number } => {
         if (!validationEnabled) {
@@ -1402,9 +1487,9 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
             },
             { source: 'local', confidence: validation.score }
         );
-        vscode.window.showInformationMessage(reason ?? '✅ Smart Fix 完成（本地模式）');
+        await showSmartFixNextSteps(reason ?? '✅ Smart Fix 完成（本地模式）');
         if (validation.errorCount > 0) {
-            vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Validate References`);
+            vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Check This Entry`);
         }
         renderSmartFixSummary(
             getShortFileName(editor.document.fileName),
@@ -1414,6 +1499,7 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
             'local',
             sourceNotes.length > 0 ? sourceNotes : undefined
         );
+        refreshValidationDecorations(editor);
     };
 
     if (officialEnabled) {
@@ -1426,87 +1512,53 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
                 let officialText = official.bibtex;
                 const officialEntry = parseSingleEntry(officialText);
                 const notes: string[] = [];
-
-                let targetKey = officialEntry?.key ?? '';
-                let officialKey = targetKey;
+                let finalText = officialText;
 
                 if (officialEntry && originalKey) {
                     const doiForKey = officialEntry.fields.doi ?? official.doi;
                     const derivedKey = doiForKey ? deriveKeyFromDoi(doiForKey) : null;
-                    officialKey = derivedKey ?? officialEntry.key;
+                    const officialKey = derivedKey ?? officialEntry.key;
+                    const keyDecision = resolveKeyHandlingDecision(
+                        config.keyHandling,
+                        originalKey,
+                        officialKey,
+                        { existingKeys, usedKeys }
+                    );
+
                     if (derivedKey && derivedKey !== officialEntry.key) {
                         notes.push(`已使用 DOI 派生 key：${derivedKey}`);
                     }
-
-                    // Determine the target key based on key replacement mode
-                    const keyReplacementMode = config.customization.behaviors.keyReplacement.mode;
-
-                    if (keyReplacementMode === 'keep-and-comment-official' || keyReplacementMode === 'keep-only') {
-                        // Always keep original key when in these modes
-                        targetKey = originalKey;
-                        notes.push(`已保留原引用 key（官方 key: ${officialKey}）`);
-                    } else if (keyReplacementMode === 'replace-only' || keyReplacementMode === 'replace-and-comment-old') {
-                        // replace modes: use keyPolicy to decide
-                        if (officialKey !== originalKey) {
-                            const decision = await resolveKeyPolicyDecision(
-                                keyPolicy,
-                                originalKey,
-                                officialKey,
-                                existingKeys
-                            );
-                            if (!decision.useOfficial) {
-                                targetKey = originalKey;
-                                notes.push(`已保留原引用 key（官方 key: ${officialKey}）`);
-                                if (decision.reason) {
-                                    notes.push(`原因：${decision.reason}`);
-                                }
-                            } else {
-                                targetKey = officialKey;
-                                if (decision.usedKeys?.has(originalKey)) {
-                                    notes.push('已使用官方 key，请更新 .tex 中的旧 key');
-                                }
-                            }
-                        }
+                    if (keyDecision.reason) {
+                        notes.push(keyDecision.reason);
+                    }
+                    if (keyDecision.useOfficialKey && keyDecision.finalKey !== originalKey) {
+                        notes.push(`已切换到官方 key：${keyDecision.finalKey}`);
                     }
 
                     if (officialFormatMode === 'raw') {
-                        if (targetKey !== officialEntry.key) {
-                            officialText = replaceEntryKeyRaw(officialText, targetKey);
-                        }
+                        officialText = replaceEntryKeyRaw(officialText, keyDecision.finalKey);
                         notes.push('输出为官方原始格式（未做本地规范化）');
                     } else {
-                        officialEntry.key = targetKey;
+                        officialEntry.key = keyDecision.finalKey;
                         officialText = serializeBibEntry(officialEntry, '  ');
                     }
-                } else if (officialEntry && officialFormatMode !== 'raw') {
-                    officialText = serializeBibEntry(officialEntry, '  ');
+
+                    finalText = officialFormatMode === 'normalized'
+                        ? formatBibEntryLocalWithOptions(officialText, localOptions)
+                        : officialText;
+                    finalText = applyKeyHandlingToEntry(
+                        finalText,
+                        config.keyHandling,
+                        originalKey,
+                        officialKey,
+                        keyDecision
+                    );
+                } else if (officialEntry) {
+                    finalText = officialFormatMode === 'normalized'
+                        ? formatBibEntryLocalWithOptions(serializeBibEntry(officialEntry, '  '), localOptions)
+                        : officialText;
                 }
 
-                let finalText = officialText;
-                if (officialFormatMode === 'normalized') {
-                    const formatted = formatBibEntryLocalWithOptions(officialText, localOptions);
-                    // Apply key replacement comment if keys differ
-                    if (originalKey && officialKey !== originalKey) {
-                        const keyReplacementOptions: KeyReplacementOptions = {
-                            mode: config.customization.behaviors.keyReplacement.mode,
-                            commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
-                            originalKey: originalKey,
-                            officialKey: officialKey,
-                        };
-                        finalText = applyKeyReplacement(formatted, keyReplacementOptions);
-                    } else {
-                        finalText = formatted;
-                    }
-                } else if (originalKey && officialKey !== originalKey) {
-                    // Apply key replacement comment for non-normalized mode
-                    const keyReplacementOptions: KeyReplacementOptions = {
-                        mode: config.customization.behaviors.keyReplacement.mode,
-                        commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
-                        originalKey: originalKey,
-                        officialKey: officialKey,
-                    };
-                    finalText = applyKeyReplacement(officialText, keyReplacementOptions);
-                }
                 const validation = validateAndAnalyze(finalText);
                 await applyEditorEditWithHistory(
                     editor,
@@ -1517,9 +1569,9 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
                     { source: 'official', confidence: validation.score }
                 );
                 const modeLabel = officialFormatMode === 'raw' ? '官方元数据·原始' : '官方元数据';
-                vscode.window.showInformationMessage(`✅ Smart Fix 完成（${modeLabel}）`);
+                await showSmartFixNextSteps(`✅ Smart Fix 完成（${modeLabel}）`);
                 if (validation.errorCount > 0) {
-                    vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Validate References`);
+                    vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Check This Entry`);
                 }
                 renderSmartFixSummary(
                     getShortFileName(editor.document.fileName),
@@ -1529,6 +1581,7 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
                     'official',
                     notes
                 );
+                refreshValidationDecorations(editor);
                 return;
             }
             const doi = extractDoiFromEntryText(target.text);
@@ -1572,9 +1625,9 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
             { source: 'ai', confidence: validation.score }
         );
         await incrementFormatUsage();
-        vscode.window.showInformationMessage('✅ Smart Fix 完成（智能增强）');
+        await showSmartFixNextSteps('✅ Smart Fix 完成（智能增强）');
         if (validation.errorCount > 0) {
-            vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Validate References`);
+            vscode.window.showWarningMessage(`⚠️ 仍有 ${validation.errorCount} 个关键问题，建议运行 Check This Entry`);
         }
         renderSmartFixSummary(
             getShortFileName(editor.document.fileName),
@@ -1584,6 +1637,7 @@ async function handleSmartFix(options: { officialFormatMode?: OfficialFormatMode
             'ai',
             sourceNotes.length > 0 ? sourceNotes : undefined
         );
+        refreshValidationDecorations(editor);
         await trackSuccessAndMaybeRequestRating();
     } catch (error) {
         logError('smartFix: failed, fallback to local', error);
@@ -1681,8 +1735,8 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
     const localOptions = config.localFormat;
     const officialEnabled = config.officialMetadata.enabled;
     const officialTimeout = config.officialMetadata.timeout;
-    const keyPolicy = config.officialMetadata.keyPolicy;
     const officialFormatMode = options.officialFormatMode ?? config.officialMetadata.formatMode;
+    const usedKeys = await getWorkspaceUsedKeysForKeyHandling();
 
     let officialCount = 0;
     let localCount = 0;
@@ -1692,9 +1746,6 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
     let keyCollisionCount = 0;
 
     const formattedByStartIndex = new Map<number, string>();
-    const usedKeys = keyPolicy !== 'preserve' && vscode.workspace.workspaceFolders
-        ? await scanWorkspaceForCitations()
-        : undefined;
     const existingKeys = new Set(entries.map(entry => entry.key));
 
     const cancelled = await vscode.window.withProgress({
@@ -1711,10 +1762,7 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
 
             try {
                 let formatted: string | null = null;
-                let originalKey = entry.key;
-                let targetKey = entry.key;
-                let officialKey = entry.key;
-                let needsKeyComment = false;
+                const originalKey = entry.key;
 
                 if (officialEnabled) {
                     const official = await resolveOfficialBibtexFromEntry(entry.rawText, officialTimeout);
@@ -1723,83 +1771,47 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
                         const officialEntry = parseSingleEntry(officialText);
                         if (officialEntry) {
                             const doiForKey = officialEntry.fields.doi ?? official.doi;
-                            const derivedKey = doiForKey ? deriveKeyFromDoi(doiForKey) : null;
-                            officialKey = derivedKey ?? officialEntry.key;
+                            const officialKey = doiForKey ? (deriveKeyFromDoi(doiForKey) ?? officialEntry.key) : officialEntry.key;
+                            const keyDecision = resolveKeyHandlingDecision(
+                                config.keyHandling,
+                                originalKey,
+                                officialKey,
+                                { existingKeys, usedKeys }
+                            );
 
-                            if (officialKey !== originalKey) {
-                                const keyReplacementMode = config.customization.behaviors.keyReplacement.mode;
+                            if (keyDecision.reason === '官方 key 与现有条目冲突') {
+                                keyCollisionCount++;
+                            }
 
-                                if (keyReplacementMode === 'keep-and-comment-official' || keyReplacementMode === 'keep-only') {
-                                    // Always keep original key in these modes
-                                    targetKey = originalKey;
-                                    needsKeyComment = (keyReplacementMode === 'keep-and-comment-official');
-                                    keyPreservedCount++;
-                                } else if (keyReplacementMode === 'replace-only' || keyReplacementMode === 'replace-and-comment-old') {
-                                    // replace modes: use keyPolicy to decide
-                                    let useOfficial = false;
-                                    if (keyPolicy === 'officialAlways') {
-                                        useOfficial = true;
-                                    } else if (keyPolicy === 'officialWhenUnused') {
-                                        useOfficial = usedKeys ? !usedKeys.has(originalKey) : false;
-                                    }
-
-                                    if (useOfficial && existingKeys.has(officialKey)) {
-                                        useOfficial = false;
-                                        keyCollisionCount++;
-                                    }
-
-                                    if (useOfficial) {
-                                        existingKeys.delete(originalKey);
-                                        existingKeys.add(officialKey);
-                                        targetKey = officialKey;
-                                        needsKeyComment = (keyReplacementMode === 'replace-and-comment-old');
-                                        keyReplacedCount++;
-                                    } else {
-                                        targetKey = originalKey;
-                                        keyPreservedCount++;
-                                    }
-                                }
-
-                                // Apply the target key to the entry
-                                if (officialFormatMode === 'raw') {
-                                    officialText = replaceEntryKeyRaw(officialText, targetKey);
-                                } else {
-                                    officialEntry.key = targetKey;
-                                    officialText = serializeBibEntry(officialEntry, '  ');
-                                }
+                            if (keyDecision.useOfficialKey && keyDecision.finalKey !== originalKey) {
+                                existingKeys.delete(originalKey);
+                                existingKeys.add(keyDecision.finalKey);
+                                keyReplacedCount++;
                             } else {
                                 keyPreservedCount++;
-                                if (officialFormatMode !== 'raw') {
-                                    officialText = serializeBibEntry(officialEntry, '  ');
-                                }
                             }
-                        } else if (officialFormatMode !== 'raw') {
-                            officialText = official.bibtex;
-                        }
 
-                        if (officialFormatMode === 'normalized') {
-                            formatted = formatBibEntryLocalWithOptions(officialText, localOptions);
-                            if (needsKeyComment && officialKey !== originalKey) {
-                                const keyReplacementOptions: KeyReplacementOptions = {
-                                    mode: config.customization.behaviors.keyReplacement.mode,
-                                    commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
-                                    originalKey: originalKey,
-                                    officialKey: officialKey,
-                                };
-                                formatted = applyKeyReplacement(formatted, keyReplacementOptions);
-                            }
-                        } else {
-                            if (needsKeyComment && officialKey !== originalKey) {
-                                const keyReplacementOptions: KeyReplacementOptions = {
-                                    mode: config.customization.behaviors.keyReplacement.mode,
-                                    commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
-                                    originalKey: originalKey,
-                                    officialKey: officialKey,
-                                };
-                                formatted = applyKeyReplacement(officialText, keyReplacementOptions);
+                            if (officialFormatMode === 'raw') {
+                                officialText = replaceEntryKeyRaw(officialText, keyDecision.finalKey);
                             } else {
-                                formatted = officialText;
+                                officialEntry.key = keyDecision.finalKey;
+                                officialText = serializeBibEntry(officialEntry, '  ');
                             }
+
+                            formatted = officialFormatMode === 'normalized'
+                                ? formatBibEntryLocalWithOptions(officialText, localOptions)
+                                : officialText;
+                            formatted = applyKeyHandlingToEntry(
+                                formatted,
+                                config.keyHandling,
+                                originalKey,
+                                officialKey,
+                                keyDecision
+                            );
+                        } else {
+                            formatted = officialFormatMode === 'normalized'
+                                ? formatBibEntryLocalWithOptions(officialText, localOptions)
+                                : officialText;
                         }
                         officialCount++;
                     }
@@ -1811,54 +1823,35 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
                     if (parsedEntry && parsedEntry.fields.doi) {
                         const derivedKey = deriveKeyFromDoi(parsedEntry.fields.doi);
                         if (derivedKey && derivedKey !== originalKey) {
-                            const keyReplacementMode = config.customization.behaviors.keyReplacement.mode;
-                            let needsKeyCommentLocal = false;
+                            const keyDecision = resolveKeyHandlingDecision(
+                                config.keyHandling,
+                                originalKey,
+                                derivedKey,
+                                { existingKeys, usedKeys }
+                            );
 
-                            if (keyReplacementMode === 'keep-and-comment-official' || keyReplacementMode === 'keep-only') {
-                                // Always keep original key in these modes
-                                targetKey = originalKey;
-                                officialKey = derivedKey;
-                                needsKeyCommentLocal = (keyReplacementMode === 'keep-and-comment-official');
-                                keyPreservedCount++;
-                            } else if (keyReplacementMode === 'replace-only' || keyReplacementMode === 'replace-and-comment-old') {
-                                // replace modes: use keyPolicy to decide
-                                let useOfficial = false;
-                                if (keyPolicy === 'officialAlways') {
-                                    useOfficial = true;
-                                } else if (keyPolicy === 'officialWhenUnused') {
-                                    useOfficial = usedKeys ? !usedKeys.has(originalKey) : false;
-                                }
-
-                                if (useOfficial && existingKeys.has(derivedKey)) {
-                                    useOfficial = false;
-                                    keyCollisionCount++;
-                                }
-
-                                if (useOfficial) {
-                                    existingKeys.delete(originalKey);
-                                    existingKeys.add(derivedKey);
-                                    targetKey = derivedKey;
-                                    officialKey = derivedKey;
-                                    needsKeyCommentLocal = (keyReplacementMode === 'replace-and-comment-old');
-                                    keyReplacedCount++;
-                                } else {
-                                    targetKey = originalKey;
-                                    keyPreservedCount++;
-                                }
+                            if (keyDecision.reason === '官方 key 与现有条目冲突') {
+                                keyCollisionCount++;
                             }
 
-                            parsedEntry.key = targetKey;
+                            if (keyDecision.useOfficialKey && keyDecision.finalKey !== originalKey) {
+                                existingKeys.delete(originalKey);
+                                existingKeys.add(keyDecision.finalKey);
+                                keyReplacedCount++;
+                            } else {
+                                keyPreservedCount++;
+                            }
+
+                            parsedEntry.key = keyDecision.finalKey;
                             formatted = serializeBibEntry(parsedEntry, '  ');
                             formatted = formatBibEntryLocalWithOptions(formatted, localOptions);
-                            if (needsKeyCommentLocal && officialKey !== originalKey) {
-                                const keyReplacementOptions: KeyReplacementOptions = {
-                                    mode: config.customization.behaviors.keyReplacement.mode,
-                                    commentPrefix: config.customization.behaviors.keyReplacement.commentPrefix,
-                                    originalKey: originalKey,
-                                    officialKey: officialKey,
-                                };
-                                formatted = applyKeyReplacement(formatted, keyReplacementOptions);
-                            }
+                            formatted = applyKeyHandlingToEntry(
+                                formatted,
+                                config.keyHandling,
+                                originalKey,
+                                derivedKey,
+                                keyDecision
+                            );
                         } else {
                             formatted = formatBibEntryLocalWithOptions(entry.rawText, localOptions);
                             keyPreservedCount++;
@@ -1905,6 +1898,7 @@ async function handleSmartFixAll(options: { officialFormatMode?: OfficialFormatM
         `✅ Smart Fix All 完成（${modeLabel}）：官方 ${officialCount}，本地 ${localCount}，失败 ${failCount}，key替换 ${keyReplacedCount}，保留 ${keyPreservedCount}` +
         (keyCollisionCount > 0 ? `（冲突跳过 ${keyCollisionCount}）` : '')
     );
+    refreshValidationDecorations(editor);
 }
 
 async function handleOfficialReport(): Promise<void> {
@@ -2046,7 +2040,10 @@ async function handleOfficialReport(): Promise<void> {
     );
 }
 
-function renderValidationResults(results: EntryValidationResult[]): void {
+function renderValidationResults(
+    results: EntryValidationResult[],
+    scope: 'entry' | 'file'
+): void {
     const channel = getOutputChannel();
     channel.clear();
     channel.show(true);
@@ -2087,7 +2084,9 @@ function renderValidationResults(results: EntryValidationResult[]): void {
     }
 
     if (errorCount > 0) {
-        channel.appendLine('👉 建议：先运行 Smart Fix，再运行 Validate References');
+        const fixCommand = scope === 'entry' ? 'Smart Fix' : 'Smart Fix All';
+        const checkCommand = scope === 'entry' ? 'Check This Entry' : 'Check This File';
+        channel.appendLine(`👉 建议：先运行 ${fixCommand}，再运行 ${checkCommand}`);
         vscode.window.showWarningMessage('⚠️ 发现关键问题，建议先运行 Smart Fix');
     }
 }
@@ -2114,7 +2113,39 @@ async function handleValidateEntries(): Promise<void> {
     }
 
     const results = validateEntries(result.entries, config.validation.strictness);
-    renderValidationResults(results);
+    renderValidationResults(results, 'file');
+    refreshValidationDecorations(editor);
+}
+
+async function handleValidateCurrentEntry(): Promise<void> {
+    logInfo('Command: validateEntry');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage('请先打开一个文件');
+        return;
+    }
+
+    const target = getEntryTextAndRange(editor);
+    if (!target) {
+        vscode.window.showWarningMessage('请将光标放在 BibTeX 条目内');
+        return;
+    }
+
+    const config = getConfig();
+    if (!config.validation.enabled) {
+        vscode.window.showInformationMessage('当前已关闭参考文献校验，请在设置中开启');
+        return;
+    }
+
+    const entry = parseSingleEntry(target.text);
+    if (!entry) {
+        vscode.window.showWarningMessage('当前无法解析这一条 BibTeX 条目');
+        return;
+    }
+
+    const results = validateEntries([entry], config.validation.strictness, { detectDuplicates: false });
+    renderValidationResults(results, 'entry');
+    refreshValidationDecorations(editor);
 }
 
 async function handleShowHistory(): Promise<void> {
@@ -2172,6 +2203,7 @@ async function handleShowHistory(): Promise<void> {
 
     await changeHistory.restore(picked.record);
     vscode.window.showInformationMessage('✅ 已回滚到所选版本');
+    refreshValidationDecorations(vscode.window.activeTextEditor);
 }
 
 /**
@@ -2179,25 +2211,21 @@ async function handleShowHistory(): Promise<void> {
  */
 async function updateMenuVisibility(): Promise<void> {
     const config = getConfig();
-    const visibility = config.customization.featureVisibility;
+    const pinVisibility = getContextMenuPinVisibility(config.ui.contextMenuPins);
 
-    // Set context keys for menu visibility
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFix', visibility.smartFix);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showValidate', visibility.validate);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showHistory', visibility.history);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showAdvancedMenu', visibility.advancedMenu);
-
-    // Advanced menu items
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFixAll', visibility.advanced.smartFixAll);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFixAllOfficialRaw', visibility.advanced.smartFixAllOfficialRaw);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showOfficialReport', visibility.advanced.officialReport);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showRemoveDuplicates', visibility.advanced.removeDuplicates);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showFindUnusedCitations', visibility.advanced.findUnusedCitations);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showFormatEntryLocal', visibility.advanced.formatEntryLocal);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showFormatEntryAI', visibility.advanced.formatEntryAI);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFixOfficialRaw', visibility.advanced.smartFixOfficialRaw);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showFormatAllEntriesLocal', visibility.advanced.formatAllEntriesLocal);
-    await vscode.commands.executeCommand('setContext', 'referenceManager.showFormatAllEntriesAI', visibility.advanced.formatAllEntriesAI);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFix', true);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showValidateEntry', true);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showFindUnused', true);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showSmartFixAll', true);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showValidateAll', true);
+    await vscode.commands.executeCommand(
+        'setContext',
+        'referenceManager.showCommandCenter',
+        config.ui.showCommandCenterInContextMenu
+    );
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showPinnedHistory', pinVisibility.history);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showPinnedRemoveDuplicates', pinVisibility.removeDuplicates);
+    await vscode.commands.executeCommand('setContext', 'referenceManager.showPinnedOfficialReport', pinVisibility.officialReport);
 }
 
 /**
@@ -2213,14 +2241,16 @@ export function activate(context: vscode.ExtensionContext): void {
     // 初始化formatter
     formatter = initFormatter();
     changeHistory = new ChangeHistory(context);
+    validationDecorations = new ValidationDecorationsController();
 
     // 初始化工作流管理器
     workflowManager = new WorkflowManager();
     const initialConfig = getConfig();
-    workflowManager.registerWorkflowCommands(context, initialConfig.customization.workflows);
+    workflowManager.registerWorkflowCommands(context, initialConfig.experimental.workflows);
 
     // 初始化菜单可见性
-    updateMenuVisibility();
+    void updateMenuVisibility();
+    refreshValidationDecorations(vscode.window.activeTextEditor);
 
     // 注册配置变化监听 (Req 4.7)
     const configDisposable = onConfigChange((updatedConfig) => {
@@ -2229,14 +2259,34 @@ export function activate(context: vscode.ExtensionContext): void {
         } else {
             formatter = initFormatter();
         }
-        // 更新菜单可见性
-        updateMenuVisibility();
-        // 重新注册工作流命令
+        void updateMenuVisibility();
         if (workflowManager) {
-            workflowManager.registerWorkflowCommands(context, updatedConfig.customization.workflows);
+            workflowManager.registerWorkflowCommands(context, updatedConfig.experimental.workflows);
+        }
+        refreshValidationDecorations(vscode.window.activeTextEditor);
+    });
+    const activeEditorDisposable = vscode.window.onDidChangeActiveTextEditor((editor) => {
+        refreshValidationDecorations(editor);
+    });
+    const documentChangedDisposable = vscode.workspace.onDidChangeTextDocument((event) => {
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor && event.document === activeEditor.document) {
+            refreshValidationDecorations(activeEditor);
         }
     });
-    context.subscriptions.push(configDisposable);
+    const saveDisposable = vscode.workspace.onDidSaveTextDocument((document) => {
+        void handleValidateOnSave(document);
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor && activeEditor.document === document) {
+            refreshValidationDecorations(activeEditor);
+        }
+    });
+    context.subscriptions.push(
+        configDisposable,
+        activeEditorDisposable,
+        documentChangedDisposable,
+        saveDisposable
+    );
 
     // 注册命令
     const formatCommand = vscode.commands.registerCommand(
@@ -2249,17 +2299,32 @@ export function activate(context: vscode.ExtensionContext): void {
         handleSmartFix
     );
 
-    const smartFixOfficialRawCommand = vscode.commands.registerCommand(
-        'referenceManager.smartFixOfficialRaw',
+    const smartFixEntryRawCommand = vscode.commands.registerCommand(
+        'referenceManager.internal.smartFixEntryRaw',
         () => handleSmartFix({ officialFormatMode: 'raw' })
     );
 
     const smartFixAllCommand = vscode.commands.registerCommand(
+        'referenceManager.quickSmartFixFile',
+        handleSmartFixAll
+    );
+
+    const smartFixAllRawCommand = vscode.commands.registerCommand(
+        'referenceManager.internal.smartFixFileRaw',
+        () => handleSmartFixAll({ officialFormatMode: 'raw' })
+    );
+
+    const legacySmartFixAllCommand = vscode.commands.registerCommand(
         'referenceManager.smartFixAll',
         handleSmartFixAll
     );
 
-    const smartFixAllOfficialRawCommand = vscode.commands.registerCommand(
+    const legacySmartFixOfficialRawCommand = vscode.commands.registerCommand(
+        'referenceManager.smartFixOfficialRaw',
+        () => handleSmartFix({ officialFormatMode: 'raw' })
+    );
+
+    const legacySmartFixAllOfficialRawCommand = vscode.commands.registerCommand(
         'referenceManager.smartFixAllOfficialRaw',
         () => handleSmartFixAll({ officialFormatMode: 'raw' })
     );
@@ -2267,6 +2332,11 @@ export function activate(context: vscode.ExtensionContext): void {
     const officialReportCommand = vscode.commands.registerCommand(
         'referenceManager.officialReport',
         handleOfficialReport
+    );
+
+    const validateEntryCommand = vscode.commands.registerCommand(
+        'referenceManager.validateEntry',
+        handleValidateCurrentEntry
     );
 
     const validateEntriesCommand = vscode.commands.registerCommand(
@@ -2318,12 +2388,21 @@ export function activate(context: vscode.ExtensionContext): void {
         handleBatchFormatLocal
     );
 
+    const openCommandCenterCommand = vscode.commands.registerCommand(
+        'referenceManager.openCommandCenter',
+        handleOpenCommandCenter
+    );
+
     context.subscriptions.push(
         smartFixCommand,
-        smartFixOfficialRawCommand,
+        smartFixEntryRawCommand,
         smartFixAllCommand,
-        smartFixAllOfficialRawCommand,
+        smartFixAllRawCommand,
+        legacySmartFixAllCommand,
+        legacySmartFixOfficialRawCommand,
+        legacySmartFixAllOfficialRawCommand,
         officialReportCommand,
+        validateEntryCommand,
         validateEntriesCommand,
         showHistoryCommand,
         formatCommand,
@@ -2333,7 +2412,8 @@ export function activate(context: vscode.ExtensionContext): void {
         viewLicenseStatusCommand,
         formatEntryLocalCommand,
         batchFormatCommand,
-        batchFormatLocalCommand
+        batchFormatLocalCommand,
+        openCommandCenterCommand
     );
 
     // 启动时检查配置 (Req 5.2)
@@ -2369,6 +2449,9 @@ export function deactivate(): void {
     console.log('Reference Manager Pro is now deactivated.');
     if (outputChannel) {
         outputChannel.dispose();
+    }
+    if (validationDecorations) {
+        validationDecorations.dispose();
     }
     if (workflowManager) {
         workflowManager.dispose();

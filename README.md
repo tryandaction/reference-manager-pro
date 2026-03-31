@@ -1,185 +1,105 @@
 # Reference Manager Pro
 
-🎓 Professional LaTeX bibliography management for VS Code
+[中文说明](./README_CN.md) | [English](./README_EN.md)
 
-Streamline your research workflow with Smart Fix, quality validation, and transparent change history.
+## 中文
 
-## ✨ Features
+Reference Manager Pro 是一个面向学术研究者、学生和论文作者的 VS Code / Kiro BibTeX 管理扩展。
 
-### ✨ Smart Fix (Recommended)
-One-click fix for messy BibTeX entries. Uses local rules by default and upgrades to AI when available, with safe fallback.
-If DOI is present, Smart Fix can pull official metadata automatically.
+它不是单纯“排版参考文献”，而是把参考文献处理升级成一套更可信、更省心的工作流：
 
-### 🔍 Unused Citation Detection
-Scan your entire LaTeX project to find citations in your `.bib` file that are never referenced. Clean up your bibliography effortlessly.
+- 优先使用 DOI 官方元数据，尽量避免“格式对了但内容不准”
+- 默认入口直接提供最常用的 5 个动作
+- 剩余低频模式和高级工具统一收敛到 `More Tools`
+- 所有自动修改都带有摘要、来源、历史记录与回滚能力
 
-### 🔄 Smart Duplicate Removal
-Detect duplicate entries (like arXiv preprints and published versions) using AI. Get recommendations on which version to keep.
+### 适合谁
 
-### ✅ Quality Validation
-Check reference quality and surface missing/incorrect fields with a clear confidence score.
+- 用 LaTeX / BibTeX 写论文、报告、毕业设计的人
+- 参考文献来源杂、格式乱、经常需要清理 `.bib` 文件的人
+- 既想要“一键修复”，又不希望失去可控性和可回滚性的人
 
-### 🧾 Change History
-Every automatic edit is recorded and can be rolled back in one click, with source and confidence shown.
+### 核心流程
 
-### 🔍 Transparent Change Summary
-After Smart Fix, you get a concise summary of what changed and a confidence label.
-The summary also indicates whether changes came from local rules or AI enhancement.
-Official metadata lookups keep your original citation key by default.
-When the key is replaced, the old key is preserved as a comment on the entry header.
+1. 打开 `.bib` 文件
+2. 运行 `Reference Manager: Smart Fix`
+3. 需要检查这一条时运行 `Reference Manager: Check This Entry`
+4. 需要清理无用条目时运行 `Reference Manager: Clean Unused Citations`
+5. 需要批量处理整份文件时运行 `Reference Manager: Smart Fix All`
+6. 需要检查整份文件时运行 `Reference Manager: Check This File`
+7. 其余低频模式再运行 `Reference Manager: More Tools`
+8. 如有需要，用 `History & Restore` 回滚
 
-## 📊 Free vs Pro
+### 主要能力
 
-| Feature | Free | Pro |
-|---------|------|-----|
-| Smart Fix (AI enhanced) | 5/day | ✅ Unlimited |
-| Validate References | ✅ | ✅ |
-| Change History | ✅ | ✅ |
-| Find Unused Citations | 3/day | ✅ Unlimited |
-| Remove Duplicates | ✅ | ✅ |
-| Batch Format All | ❌ | ✅ |
+- `Smart Fix`：单条参考文献的一键可信修复
+- `Check This Entry`：检查当前这一条条目的问题
+- `Clean Unused Citations`：清理工作区中未使用的参考文献
+- `Smart Fix All`：处理当前整个 `.bib` 文件
+- `Check This File`：检查当前整个 `.bib` 文件的问题
+- `More Tools`：只保留低频模式和高级工具
+- `History & Restore`：自动修改记录与回滚
+- `keyHandling.*`：统一控制 cite key 替换/保留策略
+- `quality.*`：保存后校验、内联告警装饰
 
-## 🚀 Quick Start
+### 默认界面与预设
 
-1. Install the extension from VS Code Marketplace
-2. (Optional) Enable Smart Fix AI enhancement (Groq recommended - it's free!):
-   - Press `Ctrl+,` to open Settings
-   - Search for "Reference Manager"
-   - Set `AI Provider` to `groq`
-   - Get a free API key from [console.groq.com](https://console.groq.com)
-   - Enter it in `Groq Api Key`
-3. Open a `.bib` file and run `Smart Fix`
+- 默认右键固定提供 5 个高频动作和 `More Tools`
+- `referenceManager.ui.preset = minimal`：不额外挂出高级固定项
+- `referenceManager.ui.preset = review`：默认额外挂出 `History & Restore`
+- `referenceManager.ui.preset = power`：默认额外挂出 `History & Restore` 与 `Official Metadata Check`
+- `referenceManager.ui.contextMenuPins`：最多再固定 2 个高级动作
 
-### Commands (Simplified)
+### 文档入口
 
-- `Reference Manager: Smart Fix` - One-click fix for a BibTeX entry (recommended)
-- `Reference Manager: Advanced: Smart Fix (Official Raw)` - Official raw BibTeX output (no local normalization)
-- `Reference Manager: Advanced: Smart Fix All (Official)` - Batch Smart Fix using official DOI metadata when available
-- `Reference Manager: Advanced: Batch Official Fix (Raw)` - Batch official raw BibTeX output
-- `Reference Manager: Advanced: Official Metadata Report` - Official metadata availability report
-- `Reference Manager: Validate References` - Check reference quality and highlight issues
-- `Reference Manager: History` - View and rollback recent changes
-- `Reference Manager: Advanced: Format Entry (AI)` - Format selected entry with AI
-- `Reference Manager: Advanced: Format Entry (Local)` - Format with local rules (free, unlimited)
-- `Reference Manager: Advanced: Find Unused Citations` - Scan workspace for unused references
-- `Reference Manager: Advanced: Remove Duplicate Entries` - Find and remove duplicates
-- `Reference Manager: Advanced: Format All Entries (Pro)` - Batch format entire file
-- `Reference Manager: Activate License` - Enter your Pro license key
-- `Reference Manager: View License Status` - Check your current plan
+- [中文完整说明](./README_CN.md)
+- [English Full Guide](./README_EN.md)
+- [快速开始](./docs/guides/QUICK_START.md)
+- [Key 处理指南](./docs/guides/KEY_REPLACEMENT_GUIDE.md)
 
-## ⚙️ Configuration
+## English
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `referenceManager.aiProvider` | AI provider (groq/anthropic) | groq |
-| `referenceManager.groqApiKey` | Groq API key (free!) | - |
-| `referenceManager.apiKey` | Anthropic API key | - |
-| `referenceManager.groqModel` | Groq model | llama-3.3-70b-versatile |
-| `referenceManager.model` | Anthropic model | claude-sonnet-4-20250514 |
-| `referenceManager.licenseKey` | Pro license key | - |
-| `referenceManager.maxRetries` | Max API retry attempts | 3 |
-| `referenceManager.timeout` | API timeout (ms) | 30000 |
-| `referenceManager.officialMetadata.enabled` | Enable official DOI metadata lookup | true |
-| `referenceManager.officialMetadata.timeout` | DOI lookup timeout (ms) | 8000 |
-| `referenceManager.officialMetadata.formatMode` | Official formatting mode (normalized/raw) | normalized |
-| `referenceManager.officialMetadata.keyPolicy` | Cite key policy (preserve/officialWhenUnused/officialAlways) | officialWhenUnused |
+Reference Manager Pro is a BibTeX productivity extension for VS Code / Kiro, built for researchers, students, and academic writers.
 
-## ✅ Trust & Transparency
+It is designed to do more than format entries:
 
-- Smart Fix never hides changes: every edit is tracked and reversible
-- Validation highlights missing/incorrect fields so you know what to trust
-- AI is an enhancement layer, not a blind overwrite
+- prefer official DOI metadata whenever possible
+- expose the 5 most common tasks directly in the default surface
+- keep lower-frequency modes and advanced tools in `More Tools`
+- make every automated change transparent, reviewable, and reversible
 
-## 💡 Tips
+### Who It Is For
 
-- **Use Groq (Free!)**: Get a free API key at [console.groq.com](https://console.groq.com) - fast and unlimited
-- **Or Anthropic**: Visit [console.anthropic.com](https://console.anthropic.com) for Claude (new users get $5 free)
-- **Upgrade to Pro**: Purchase a license at [Gumroad](https://gumroad.com/l/reference-manager-pro) for unlimited AI features
-- **Use Local Format**: When offline or to save API calls, use the local formatting option
+- people writing papers, theses, and reports with LaTeX / BibTeX
+- users with messy `.bib` files from mixed sources
+- users who want one-click cleanup without losing control
 
-## 📚 Documentation
+### Core Workflow
 
-- [Quick Start Guide](docs/guides/QUICK_START.md)
-- [Key Replacement Guide](docs/guides/KEY_REPLACEMENT_GUIDE.md) - 四种 Citation Key 替换模式详解
-- [Test Guide](docs/guides/TEST_GUIDE.md)
-- [Release Notes](docs/releases/)
+1. Open a `.bib` file
+2. Run `Reference Manager: Smart Fix`
+3. Run `Reference Manager: Check This Entry` when you want to inspect one entry
+4. Run `Reference Manager: Clean Unused Citations` when you want to clean unused entries
+5. Run `Reference Manager: Smart Fix All` when you want to process the whole file
+6. Run `Reference Manager: Check This File` when you want to inspect the whole file
+7. Use `Reference Manager: More Tools` for the remaining advanced modes
+8. Use `History & Restore` if you need rollback
 
-## 📝 Changelog
+### Key Capabilities
 
-### v0.3.5 (Latest)
-- **新增两种 Key 替换模式**：`replace-only`（仅替换，无注释）和 `keep-only`（仅保留，无注释）
-- **修复 Bug**：`keep-and-comment-official` 模式现在正确工作（之前会错误地替换 key）
-- **四种模式**：完整支持所有 Citation Key 处理场景
-- 详见 [Release Notes v0.3.5](docs/releases/RELEASE_NOTES_v0.3.5.md)
+- `Smart Fix`: trustworthy one-click cleanup for the current entry
+- `Check This Entry`: check issues in the current entry only
+- `Clean Unused Citations`: clean bibliography entries not used in workspace `.tex` files
+- `Smart Fix All`: process the current `.bib` file
+- `Check This File`: inspect issues across the whole current `.bib` file
+- `More Tools`: reserved for lower-frequency advanced modes and tools
+- `History & Restore`: change tracking and rollback
+- `keyHandling.*`: unified cite-key replacement/preservation policy
+- `quality.*`: validate-on-save and inline diagnostics
 
-### v0.3.4
-- **自定义功能**：菜单可见性控制、工作流系统、行为配置
-- **Key 替换模式**：支持 `replace-and-comment-old` 和 `keep-and-comment-official`
-- 详见 [Release Notes v0.3.4](docs/releases/RELEASE_NOTES_v0.3.4.md)
+### Documentation
 
-### v0.3.0
-- **批量官方修复大幅增强**：Citation Key 生成支持所有主流期刊（覆盖率从 ~10% 提升到 ~100%）
-- **期刊缩写完善**：从 2 个扩展到 40+ 个主流期刊的标准缩写
-- **旧 key 注释修复**：key 替换后正确添加 `% oldkey: xxx` 注释
-- **标题保护词增强**：新增物理学专有名词自动保护
-
-### v0.2.9
-- Official key policy (preserve / when-unused / always replace)
-- Smart Fix notes when official metadata is unavailable
-
-### v0.2.8
-- Smart Fix All (Official) for batch DOI-based correction
-- Validation detects duplicate DOI/key entries
-
-### v0.2.7
-- Smart Fix fetches official metadata by DOI (keeps original cite key)
-- Summary and History now show official source and confidence
-
-### v0.2.6
-- Smart Fix unified entry with safe AI fallback
-- Quality validation with confidence score and concise output
-- Change history with rollback and source/confidence labels
-
-### v0.2.1
-- Added fetch polyfill for older VS Code hosts (fixes Groq/Anthropic calls)
-- Local & AI formatting now produce standardized academic output (normalized authors/field order/pages/DOI)
-- Duplicate check now guards against huge .bib files; unused-citation scan warns when no .tex citations
-
-### v0.2.2
-- Added integration smoke tests (`npm run test:integration`) to ensure core commands run end-to-end
-- Improved observability with OutputChannel logs for key commands and failures
-
-### v0.2.3
-- Added one-click batch local formatting for the whole `.bib` file (`Format All Entries (Local)`)
-- Batch AI formatting now writes back safely by entry ranges and falls back to local formatting per-entry on failure
-
-### v0.2.4
-- One-click single-entry formatting: no selection required (cursor inside an entry is enough)
-- Added onCommand activation events for more reliable command execution
-
-### v0.2.5
-- Local formatting is now configurable (author normalization, title protected words, journal abbreviation mapping)
-- AI formatting post-processing uses the same local rules to keep the whole library consistent
-
-### v0.2.0
-- Added Groq AI support (free!)
-- Multiple AI provider selection (Groq/Anthropic)
-- Groq models: Llama 3.3 70B, Llama 3.1 8B, Mixtral, Gemma 2
-- Updated documentation
-
-### v0.1.0
-- Initial release
-- AI-powered BibTeX formatting
-- Unused citation detection
-- Smart duplicate removal
-- Local offline formatting
-- Pro features: batch formatting
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## 🤝 Support
-
-- Report issues on [GitHub](https://github.com/tryandaction/reference-manager-pro/issues)
-- Questions? Email 2812149844@qq.com
+- [Chinese Guide](./README_CN.md)
+- [English Guide](./README_EN.md)
+- [Quick Start](./docs/guides/QUICK_START.md)
+- [Key Handling Guide](./docs/guides/KEY_REPLACEMENT_GUIDE.md)

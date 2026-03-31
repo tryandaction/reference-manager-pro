@@ -1,349 +1,162 @@
-# Reference Manager Pro - 定制化系统测试指南
+# Reference Manager Pro v0.4.0 测试指南
 
-## 测试版本
-- 版本：0.3.4
-- 构建时间：2026-03-05
-- 包大小：414.84 KB
+## 版本信息
 
-## 新增功能概览
+- 版本：0.4.0
+- 目标：验证新的主入口 + `More Tools` 模型、统一配置和质量反馈
 
-### 1. 功能可见性控制
-用户可以自定义哪些功能在右键菜单中显示。
+## 测试1：默认右键最简
 
-### 2. Key替换模式定制
-支持两种citation key替换模式：
-- **模式1（默认）**：替换为官方key，注释旧key
-- **模式2（新增）**：保留原key，注释官方key
+目标：
+- 验证默认右键直接提供主入口动作
 
-### 3. 工作流系统
-支持自定义多步骤操作，一键完成复杂任务。
+步骤：
+1. 打开任意 `.bib` 文件
+2. 右键点击条目
 
-### 4. 行为定制化
-可配置各功能的具体行为（如去重策略、验证时机等）。
+预期：
+- 看到 `Smart Fix`
+- 看到 `Check This Entry`
+- 看到 `Clean Unused Citations`（在工作区中）
+- 看到 `Smart Fix All`
+- 看到 `Check This File`
+- 看到 `More Tools`
+- 不再出现旧式大串高级命令
 
----
+## 测试2：More Tools 入口
 
-## 测试步骤
+目标：
+- 验证剩余低频能力统一进入 `More Tools`
 
-### 测试1：功能可见性控制
+步骤：
+1. 命令面板运行 `Reference Manager: More Tools`
+2. 检查分组
 
-**目标**：验证菜单项可以根据配置显示/隐藏
+预期：
+- 出现 `我的常用`（如已固定额外动作）
+- 出现 `更多修复方式`
+- 出现 `更多清理与检查`
+- 出现 `历史与恢复`
+- 出现 `实验功能`（配置实验工作流时）
 
-**步骤**：
-1. 打开VS Code设置（Ctrl+,）
-2. 搜索 `referenceManager.customization.featureVisibility`
-3. 将 `smartFix` 设置为 `false`
-4. 打开任意 `.bib` 文件
-5. 右键点击，检查"Smart Fix"是否消失
+## 测试3：contextMenuPins
 
-**预期结果**：
-- Smart Fix 不应出现在右键菜单中
-- 其他功能仍然可见
+目标：
+- 验证右键固定动作生效
 
-**恢复**：
-- 将 `smartFix` 改回 `true`
-
----
-
-### 测试2：Key替换模式 - 保留原key
-
-**目标**：验证新的key替换模式（保留原key，注释官方key）
-
-**步骤**：
-1. 打开VS Code设置
-2. 搜索 `referenceManager.customization.behaviors.keyReplacement.mode`
-3. 选择 `keep-and-comment-official`
-4. 创建测试文件 `test.bib`：
-```bibtex
-@article{mykey2020,
-  author = {Smith, John},
-  title = {Test Article},
-  journal = {Nature},
-  year = {2020},
-  doi = {10.1038/s41586-020-12345-6}
-}
-```
-5. 右键点击条目，选择"Smart Fix"
-6. 检查结果
-
-**预期结果**：
-```bibtex
-@article{mykey2020, % official_key: Nature:s41586-020-12345-6
-  author = {Smith, John},
-  title = {Test Article},
-  journal = {Nature},
-  year = {2020},
-  doi = {10.1038/s41586-020-12345-6}
-}
-```
-- Citation key 保持为 `mykey2020`
-- 第一行添加注释 `% official_key: Nature:s41586-020-12345-6`
-
----
-
-### 测试3：Key替换模式 - 替换为官方key（默认）
-
-**目标**：验证默认key替换模式
-
-**步骤**：
-1. 打开VS Code设置
-2. 将 `keyReplacement.mode` 改回 `replace-and-comment-old`
-3. 使用相同的测试文件
-4. 右键点击条目，选择"Smart Fix"
-
-**预期结果**：
-```bibtex
-@article{Nature:s41586-020-12345-6, % oldkey: mykey2020
-  author = {Smith, John},
-  title = {Test Article},
-  journal = {Nature},
-  year = {2020},
-  doi = {10.1038/s41586-020-12345-6}
-}
-```
-- Citation key 替换为 `Nature:s41586-020-12345-6`
-- 第一行添加注释 `% oldkey: mykey2020`
-
----
-
-### 测试4：自定义注释前缀
-
-**目标**：验证可以自定义注释前缀
-
-**步骤**：
-1. 打开VS Code设置
-2. 搜索 `referenceManager.customization.behaviors.keyReplacement.commentPrefix`
-3. 将值改为 `% original_citation_key:`
-4. 使用测试文件执行Smart Fix
-
-**预期结果**：
-- 注释前缀变为 `% original_citation_key:` 而不是默认的 `% oldkey:`
-
----
-
-### 测试5：工作流系统 - 预定义工作流
-
-**目标**：验证预定义的"Optimize All"工作流
-
-**步骤**：
-1. 创建测试文件 `workflow-test.bib`：
-```bibtex
-@article{smith2020,
-  author = {Smith, John},
-  title = {test article},
-  journal = {Nature},
-  year = {2020}
-}
-
-@article{smith2020,
-  author = {Smith, John},
-  title = {test article},
-  journal = {Nature},
-  year = {2020}
-}
-
-@article{jones2021,
-  author={Jones, Mary},
-  title={Another Article},
-  journal={Science}
-}
-```
-2. 打开命令面板（Ctrl+Shift+P）
-3. 输入 `Reference Manager: Manage Workflows`
-4. 选择 "Optimize All"
-
-**预期结果**：
-- 进度通知显示三个步骤：格式化、去重、验证
-- 重复条目被删除（只保留一个smith2020）
-- 所有条目格式化（标题大小写保护、作者格式统一）
-- 显示验证结果
-
----
-
-### 测试6：高级菜单可见性
-
-**目标**：验证高级菜单项可以单独控制
-
-**步骤**：
-1. 打开VS Code设置
-2. 搜索 `referenceManager.customization.featureVisibility.advanced`
-3. 将 `removeDuplicates` 设置为 `false`
-4. 打开 `.bib` 文件
-5. 右键 → Advanced 子菜单
-
-**预期结果**：
-- "Remove Duplicates" 不应出现在Advanced菜单中
-- 其他高级功能仍然可见
-
----
-
-### 测试7：隐藏整个高级菜单
-
-**目标**：验证可以完全隐藏高级菜单
-
-**步骤**：
-1. 打开VS Code设置
-2. 将 `referenceManager.customization.featureVisibility.advancedMenu` 设置为 `false`
-3. 打开 `.bib` 文件
-4. 右键点击
-
-**预期结果**：
-- "Advanced" 子菜单完全不显示
-- 只显示主要功能（Smart Fix、Validate、History）
-
----
-
-### 测试8：配置迁移
-
-**目标**：验证从旧版本升级时配置正确迁移
-
-**步骤**：
-1. 打开VS Code设置JSON（Ctrl+Shift+P → "Preferences: Open User Settings (JSON)"）
-2. 删除所有 `referenceManager.customization` 相关配置
-3. 重新加载窗口（Ctrl+Shift+P → "Developer: Reload Window"）
-4. 打开 `.bib` 文件并右键
-
-**预期结果**：
-- 所有功能使用默认配置
-- 所有菜单项都可见
-- 没有错误提示
-
----
-
-### 测试9：工作流管理器UI
-
-**目标**：验证工作流管理器界面
-
-**步骤**：
-1. 打开命令面板（Ctrl+Shift+P）
-2. 输入 `Reference Manager: Manage Workflows`
-3. 查看QuickPick界面
-
-**预期结果**：
-- 显示 "Optimize All" 工作流
-- 显示工作流描述："Format, deduplicate, and validate all entries"
-- 显示步骤数："3 steps • Scope: file"
-- 底部有 "Open Workflow Settings" 选项
-
----
-
-### 测试10：自定义工作流
-
-**目标**：验证用户可以创建自定义工作流
-
-**步骤**：
-1. 打开VS Code设置JSON
-2. 添加自定义工作流：
+步骤：
+1. 设置：
 ```json
-"referenceManager.customization.workflows": [
-    {
-        "id": "quick-format",
-        "name": "Quick Format",
-        "description": "Only format entries locally",
-        "steps": [
-            {
-                "id": "format",
-                "operation": "formatLocal",
-                "continueOnError": false,
-                "label": "Formatting..."
-            }
-        ],
-        "scope": "file",
-        "showInMenu": true
-    }
-]
+{
+  "referenceManager.ui.contextMenuPins": ["history", "officialReport"]
+}
 ```
-3. 重新加载窗口
-4. 打开命令面板 → "Manage Workflows"
+2. 打开 `.bib` 文件
+3. 右键点击
 
-**预期结果**：
-- "Quick Format" 工作流出现在列表中
-- 可以执行该工作流
-- 只执行格式化步骤
+预期：
+- 默认主入口仍然存在
+- 额外挂出 `History & Restore` 与 `Official Metadata Check`
 
----
+## 测试4：keyHandling 默认策略
 
-## 性能测试
+目标：
+- 验证 `replace-safe-and-comment-old`
 
-### 测试11：大文件性能
+步骤：
+1. 打开含 DOI 的条目
+2. 运行 `Smart Fix`
 
-**目标**：验证菜单更新不影响性能
+预期：
+- 若官方 key 安全可替换，则条目 key 替换为官方 key
+- 第一行追加旧 key 注释
 
-**步骤**：
-1. 创建包含100+条目的大型 `.bib` 文件
-2. 多次切换功能可见性配置
-3. 观察响应时间
+## 测试5：保留原 key
 
-**预期结果**：
-- 菜单更新应该是即时的（<100ms）
-- 不应有明显延迟
+目标：
+- 验证 `preserve-and-comment-official`
 
----
+步骤：
+1. 设置：
+```json
+{
+  "referenceManager.keyHandling.mode": "preserve-and-comment-official",
+  "referenceManager.keyHandling.commentPrefix": "% official_key:"
+}
+```
+2. 对含 DOI 条目运行 `Smart Fix`
 
-## 回归测试
+预期：
+- 原 key 保留
+- 第一行出现 `% official_key: ...`
 
-### 测试12：现有功能不受影响
+## 测试6：保存后校验
 
-**目标**：确保新功能不破坏现有功能
+目标：
+- 验证 `quality.validateOnSave`
 
-**步骤**：
-1. 测试所有原有命令：
-   - Smart Fix
-   - Smart Fix All
-   - Validate References
-   - Remove Duplicates
-   - Find Unused Citations
-   - Format Entry (Local)
-   - Format Entry (AI)
-   - Show History
+步骤：
+1. 设置：
+```json
+{
+  "referenceManager.quality.validateOnSave": true
+}
+```
+2. 编辑一个存在明显错误的 `.bib` 条目
+3. 保存文件
 
-**预期结果**：
-- 所有原有功能正常工作
-- 没有功能退化
+预期：
+- 保存后出现校验提示
 
----
+## 测试7：内联装饰
 
-## 已知限制
+目标：
+- 验证 `quality.showInlineDecorations`
 
-1. **工作流操作简化**：当前工作流中的操作是简化版本，主要用于演示架构
-2. **菜单动态性**：VS Code限制，菜单项需要重新加载才能完全更新
-3. **工作流UI**：当前使用QuickPick，未来可以考虑WebView界面
+步骤：
+1. 设置：
+```json
+{
+  "referenceManager.quality.showInlineDecorations": true
+}
+```
+2. 打开存在缺失字段或 DOI 格式错误的 `.bib` 文件
 
----
+预期：
+- 编辑器中出现 warning/error 装饰
 
-## 测试检查清单
+## 测试8：当前文件处理与更多模式
 
-- [ ] 测试1：功能可见性控制
-- [ ] 测试2：Key替换模式 - 保留原key
-- [ ] 测试3：Key替换模式 - 替换为官方key
-- [ ] 测试4：自定义注释前缀
-- [ ] 测试5：预定义工作流
-- [ ] 测试6：高级菜单可见性
-- [ ] 测试7：隐藏整个高级菜单
-- [ ] 测试8：配置迁移
-- [ ] 测试9：工作流管理器UI
-- [ ] 测试10：自定义工作流
-- [ ] 测试11：大文件性能
-- [ ] 测试12：回归测试
+目标：
+- 验证主入口和 `More Tools` 中的文件级动作
 
----
+步骤：
+1. 先直接运行 `Reference Manager: Smart Fix All`
+2. 再运行 `Reference Manager: More Tools`
+3. 选择 `更多整份文件处理方式`
+4. 分别测试本地批量、raw 批量、AI 批量
 
-## 报告问题
+预期：
+- 各模式可执行
+- 成功后文件内容正确更新
 
-如果发现任何问题，请记录：
-1. 测试步骤
-2. 预期结果
-3. 实际结果
-4. 错误信息（如有）
-5. VS Code版本
-6. 扩展版本
+## 测试9：历史回滚
 
----
+目标：
+- 验证 History & Restore 可回滚
 
-## 下一步
+步骤：
+1. 运行一次 Smart Fix
+2. 运行 `Reference Manager: History & Restore`
+3. 选择最近一次记录并恢复
 
-测试通过后：
-1. 更新 CHANGELOG.md
-2. 更新 README.md 添加新功能说明
-3. 创建用户文档（CUSTOMIZATION.md）
-4. 准备发布说明
+预期：
+- 文件恢复到之前状态
+
+## 自动化验证
+
+已覆盖：
+
+- `npm run compile`
+- `npm test`
+- `npm run test:integration`

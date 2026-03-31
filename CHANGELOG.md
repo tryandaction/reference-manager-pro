@@ -2,6 +2,25 @@
 
 All notable changes to Reference Manager Pro will be documented in this file.
 
+## [0.4.0] - 2026-03-21
+
+### Changed
+- ✨ **交互彻底收敛**：默认右键直接提供 5 个高频主动作，低频能力统一收敛到 `More Tools`
+- 🧭 **新增 More Tools 命令中心**：按 `我的常用 / 更多修复方式 / 更多清理与检查 / 历史与恢复 / 实验功能` 分组组织高级操作
+- ⚙️ **配置模型重构**：公开设置收敛为 `ui.*`、`keyHandling.*`、`quality.*`、`cleanup.*`、`experimental.workflows`
+- 🔑 **Citation Key 策略统一**：旧 `officialMetadata.keyPolicy` 与 `customization.behaviors.keyReplacement.*` 合并为新的 `referenceManager.keyHandling.*`
+
+### Added
+- ✅ **保存后校验**：`referenceManager.quality.validateOnSave` 现在真实生效
+- 🎯 **内联校验装饰**：`referenceManager.quality.showInlineDecorations` 现在真实显示 warning/error 提示
+- 📌 **右键固定动作**：支持通过 `referenceManager.ui.contextMenuPins` 固定最多 2 个高价值动作
+- 🧪 **实验工作流迁移**：工作流改为 `referenceManager.experimental.workflows`，默认不进入主交互
+
+### Technical Details
+- 新增配置迁移层，旧 `customization.*` 设置会自动映射到新的交互模型
+- 新增动作注册表、命令中心 UI、统一 key 处理模块和校验装饰控制器
+- 命令贡献、README 和发布说明同步更新，避免文档与实际交互脱节
+
 ## [0.3.4] - 2026-02-04
 
 ### Added

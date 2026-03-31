@@ -15,7 +15,7 @@
 
 ## 项目概述
 
-Reference Manager Pro 是一款面向 LaTeX 用户的 VS Code / Kiro 扩展。核心定位为“可信修复”：优先使用 DOI 官方元数据，必要时才使用 AI，所有变更可回滚。
+Reference Manager Pro 是一款面向 LaTeX / BibTeX 用户的 VS Code / Kiro 扩展。当前产品定位是“可信修复 + 可检查 + 可回滚”：优先使用 DOI 官方元数据，必要时才使用 AI，默认主入口直接暴露 5 个高频动作，其余低频模式统一进入 `More Tools`。
 
 ### 技术栈
 
@@ -31,6 +31,7 @@ Reference Manager Pro 是一款面向 LaTeX 用户的 VS Code / Kiro 扩展。�
 reference-manager-pro/
 ├── src/
 │   ├── extension.ts        # 扩展入口与命令
+│   ├── configurationModel.ts # 配置模型与迁移辅助
 │   ├── metadataResolver.ts # DOI 官方元数据获取
 │   ├── metadataValidator.ts# 质量校验与重复检测
 │   ├── changeHistory.ts    # 变更记录与回滚
@@ -39,12 +40,18 @@ reference-manager-pro/
 │   ├── bibParser.ts        # BibTeX 解析器
 │   ├── citationScanner.ts  # 引用扫描器
 │   ├── config.ts           # 配置管理
+│   ├── keyHandling.ts      # cite key 替换/保留策略
 │   ├── license.ts          # 许可证验证
+│   ├── validationDecorations.ts # 编辑器内联告警装饰
+│   ├── ui/                 # More Tools 与动作注册表
+│   ├── workflow/           # 实验工作流系统
 │   └── test/               # 测试文件
 ├── docs/
-│   ├── README_CN.md        # 中文用户文档
-│   ├── README_EN.md        # 英文用户文档
+│   ├── guides/             # 快速开始、测试、key 处理等指南
+│   ├── releases/           # 版本发布说明
 │   └── DEVELOPER.md        # 本文件
+├── README_CN.md            # 中文产品说明
+├── README_EN.md            # 英文产品说明
 ├── package.json
 └── tsconfig.json
 ```
@@ -58,9 +65,11 @@ reference-manager-pro/
 ```
 Smart Fix
   ├─ DOI 官方元数据 (metadataResolver)
+  ├─ cite key 决策与注释 (keyHandling)
   ├─ 本地规则格式化 (localFormatter)
   ├─ 可选 AI 增强 (aiFormatter)
   ├─ 质量校验 (metadataValidator)
+  ├─ 编辑器内联装饰 (validationDecorations)
   └─ 变更记录 (changeHistory)
 ```
 
@@ -74,8 +83,32 @@ extension.ts
  ├─ aiFormatter.ts ──→ config.ts
  ├─ localFormatter.ts ──→ bibParser.ts
  ├─ citationScanner.ts ──→ bibParser.ts
+ ├─ keyHandling.ts
+ ├─ validationDecorations.ts
+ ├─ ui/actionRegistry.ts
+ ├─ ui/commandCenter.ts
+ ├─ workflow/workflowManager.ts
  └─ license.ts ──→ config.ts
 ```
+
+### 默认交互模型
+
+- 默认右键和命令面板直接暴露：
+  - `Smart Fix`
+  - `Check This Entry`
+  - `Clean Unused Citations`
+  - `Smart Fix All`
+  - `Check This File`
+  - `More Tools`
+- `More Tools` 负责低频模式和高级工具：
+  - 官方 raw 模式
+  - 本地 / AI 单条整理
+  - 本地 / AI 批量整理
+  - 官方元数据报告
+  - 重复条目清理
+  - 历史与恢复
+  - 实验工作流
+- `referenceManager.ui.preset` 只控制额外固定项，不改变这 5 个主动作
 
 ---
 
@@ -98,7 +131,8 @@ npm test
 - 请求地址：`https://doi.org/{doi}`
 - Header：`Accept: application/x-bibtex`
 - 超时由 `referenceManager.officialMetadata.timeout` 控制
-- key 策略由 `referenceManager.officialMetadata.keyPolicy` 控制（默认仅在未使用时替换）
+- key 策略由 `referenceManager.keyHandling.mode` 控制
+- 注释前缀由 `referenceManager.keyHandling.commentPrefix` 控制
 - 输出格式由 `referenceManager.officialMetadata.formatMode` 控制（`normalized` 或 `raw`）
 
 该过程不会消耗 AI 配额。
@@ -109,7 +143,7 @@ npm test
 
 - **Physical Review (APS)**: `10.1103/physrevlett.120.093201` → `PhysRevLett.120.093201`
 - **Nature**: `10.1038/s41586-023-05740-2` → `Nature:s41586-023-05740-2`
-- **Optica/OSA**: `10.1364/optica.397235` → `OSA:optica.397235`
+- **Optica/OSA**: `10.1364/optica.397235` → `Optica:optica.397235`
 - **IOP Publishing**: `10.1088/2058-9565/ab8962` → `IOP:2058-9565/ab8962`
 - **Elsevier**: `10.1016/0370-2693(81)90590-6` → `Elsevier:0370-2693(81)90590-6`
 - **AIP Publishing**: `10.1063/1.4938164` → `AIP:1.4938164`
@@ -118,7 +152,7 @@ npm test
 
 ### 期刊缩写映射
 
-`localFormatter.ts` 中的 `DEFAULT_JOURNAL_ABBREVIATIONS` 包含 40+ 个主流期刊的标准缩写：
+`localFormatter.ts` 中的 `DEFAULT_JOURNAL_ABBREVIATIONS` 现已覆盖 200+ 个主流期刊 / 会议缩写：
 
 - Physics: Phys. Rev. Lett., Phys. Rev. A/B/D/Appl., Rev. Mod. Phys., PRX Quantum
 - Nature: Nature, Nat. Phys., Nat. Photonics, Nat. Commun.
@@ -143,6 +177,18 @@ DOI 官方元数据获取。
 resolveOfficialBibtexFromEntry(entryText, timeoutMs)
 ```
 
+### configurationModel.ts / config.ts
+
+新的公开配置模型集中在：
+
+- `ui.*`
+- `keyHandling.*`
+- `quality.*`
+- `cleanup.*`
+- `experimental.workflows`
+
+旧 `customization.*` 与 `officialMetadata.keyPolicy` 会被读取并迁移。
+
 ### metadataValidator.ts
 
 质量校验 + 重复检测。
@@ -162,6 +208,22 @@ AI 增强与重复检测。
 ### localFormatter.ts
 
 本地规则格式化与字段规范。
+
+### keyHandling.ts
+
+统一处理官方 key 与原 key 的替换、保留、注释策略。
+
+### validationDecorations.ts
+
+根据 `quality.showInlineDecorations` 在编辑器中渲染 error / warn 装饰。
+
+### ui/actionRegistry.ts + ui/commandCenter.ts
+
+定义 `More Tools` 中的动作分组、固定逻辑和二级模式选择。
+
+### workflow/*
+
+实验工作流系统，支持通过 `referenceManager.experimental.workflows` 注册多步骤处理流程。
 
 ---
 
@@ -188,6 +250,12 @@ npm run test:integration
 
 Free / Pro 使用限制由 `license.ts` 控制。
 
+当前默认产品原则：
+
+- 免费版也可使用本地整理、Smart Fix 主流程、检查与历史能力
+- Pro 主要扩展 AI 批量整理、去重等高价值高级能力
+- 所有自动改动都应带有摘要、来源、历史与回滚入口
+
 ---
 
 ## 联系方式
@@ -197,4 +265,4 @@ Free / Pro 使用限制由 `license.ts` 控制。
 
 ---
 
-*最后更新: 2026-02-03*
+*最后更新: 2026-03-31*

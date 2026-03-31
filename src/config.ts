@@ -1,477 +1,273 @@
 /**
- * config.ts - 配置管理模块
+ * config.ts - VS Code 配置读取层
  *
- * 职责：统一管理VS Code设置项的读取和验证
- * 所有配置相关的操作都通过这个模块进行，便于维护和测试
+ * 职责：从 VS Code settings 中读取配置，并在必要时将旧配置映射到新的交互模型。
+ * 纯类型、默认值和迁移逻辑位于 configurationModel.ts，便于单元测试。
  */
 
 import * as vscode from 'vscode';
-import { DEFAULT_JOURNAL_ABBREVIATIONS } from './localFormatter';
+import {
+    AIProvider,
+    ContextMenuPin,
+    CustomizationConfig,
+    DEFAULT_CONFIG,
+    ExtensionConfig,
+    OfficialKeyPolicy,
+    UIPreset,
+    ValidationStrictness,
+    WorkflowDefinition,
+    migrateLegacyConfig,
+    resolveUiConfig,
+    sanitizeContextMenuPins,
+} from './configurationModel';
 
-/**
- * AI 提供商类型
- */
-export type AIProvider = 'anthropic' | 'groq';
+export type {
+    AIProvider,
+    CleanupConfig,
+    ContextMenuPin,
+    CustomizationConfig,
+    DuplicateKeepStrategy,
+    ExtensionConfig,
+    ExperimentalConfig,
+    FeatureVisibilityConfig,
+    KeyHandlingConfig,
+    KeyHandlingMode,
+    KeyReplacementBehavior,
+    LegacyConfigInput,
+    LocalFormatConfig,
+    OfficialFormatMode,
+    OfficialKeyPolicy,
+    QualityConfig,
+    SmartFixBehavior,
+    UIPreset,
+    UIConfig,
+    ValidationBehavior,
+    ValidationConfig,
+    ValidationStrictness,
+    WorkflowDefinition,
+    WorkflowStep,
+} from './configurationModel';
 
-/**
- * 插件配置接口
- * 对应 package.json 中 contributes.configuration 定义的设置项
- */
-export interface ExtensionConfig {
-    /** AI 提供商 */
-    aiProvider: AIProvider;
-    /** Anthropic API密钥 */
-    apiKey: string;
-    /** Groq API密钥 */
-    groqApiKey: string;
-    /** API调用失败时的最大重试次数 */
-    maxRetries: number;
-    /** API请求超时时间（毫秒） */
-    timeout: number;
-    /** 使用的Claude模型ID */
-    model: string;
-    /** Groq 模型 */
-    groqModel: string;
-    /** 本地格式化配置 */
-    localFormat: LocalFormatConfig;
-    /** 校验配置 */
-    validation: ValidationConfig;
-    /** 官方元数据配置 */
-    officialMetadata: OfficialMetadataConfig;
-    /** 定制化配置 */
-    customization: CustomizationConfig;
-}
-
-export interface LocalFormatConfig {
-    /** 是否将作者从 "First Last" 规范为 "Last, First" */
-    normalizeAuthors: boolean;
-    /** 标题中需要保护大小写的专有名词/缩写词（将用 {} 包裹） */
-    protectTitleWords: string[];
-    /** 期刊/会议全称到缩写的映射（本地规则） */
-    journalAbbreviations: Record<string, string>;
-}
-
-export type ValidationStrictness = 'loose' | 'normal' | 'strict';
-
-export interface ValidationConfig {
-    enabled: boolean;
-    strictness: ValidationStrictness;
-}
-
-export interface OfficialMetadataConfig {
-    enabled: boolean;
-    timeout: number;
-    keyPolicy: OfficialKeyPolicy;
-    formatMode: OfficialFormatMode;
-}
-
-export type OfficialKeyPolicy = 'preserve' | 'officialWhenUnused' | 'officialAlways';
-export type OfficialFormatMode = 'raw' | 'normalized';
-
-// ============ Customization System Types ============
-
-/**
- * Key replacement mode
- * - replace-and-comment-old: Replace key with official key, comment out old key
- * - keep-and-comment-official: Keep original key, add official key as comment
- */
-export type KeyReplacementMode =
-    | 'replace-and-comment-old'      // 替换为官方key，注释原key
-    | 'keep-and-comment-official'    // 保留原key，注释官方key
-    | 'replace-only'                 // 仅替换为官方key，不添加注释
-    | 'keep-only';                   // 仅保留原key，不添加注释
-
-/**
- * Duplicate removal strategy
- */
-export type DuplicateKeepStrategy = 'first' | 'last' | 'most-complete' | 'ask-user';
-
-/**
- * Feature visibility configuration
- */
-export interface FeatureVisibilityConfig {
-    /** Show Smart Fix in context menu */
-    smartFix: boolean;
-    /** Show Validate References in context menu */
-    validate: boolean;
-    /** Show History in context menu */
-    history: boolean;
-    /** Show Advanced submenu */
-    advancedMenu: boolean;
-    /** Advanced menu items visibility */
-    advanced: {
-        smartFixAll: boolean;
-        smartFixAllOfficialRaw: boolean;
-        officialReport: boolean;
-        removeDuplicates: boolean;
-        findUnusedCitations: boolean;
-        formatEntryLocal: boolean;
-        formatEntryAI: boolean;
-        smartFixOfficialRaw: boolean;
-        formatAllEntriesLocal: boolean;
-        formatAllEntriesAI: boolean;
-    };
-}
-
-/**
- * Key replacement behavior configuration
- */
-export interface KeyReplacementBehavior {
-    /** How to handle key replacement when using official metadata */
-    mode: KeyReplacementMode;
-    /** Comment prefix for the preserved key */
-    commentPrefix: string;
-}
-
-/**
- * Smart Fix behavior configuration
- */
-export interface SmartFixBehavior {
-    /** Order of operations to try */
-    operationOrder: Array<'official' | 'ai' | 'local'>;
-    /** Whether to fallback to next operation on failure */
-    enableFallback: boolean;
-    /** Show detailed summary after operation */
-    showDetailedSummary: boolean;
-    /** Auto-validate after fix */
-    autoValidate: boolean;
-}
-
-/**
- * Duplicate removal behavior configuration
- */
-export interface DuplicateRemovalBehavior {
-    /** Strategy for choosing which entry to keep */
-    keepStrategy: DuplicateKeepStrategy;
-    /** Maximum entries to process (safety limit) */
-    maxEntries: number;
-}
-
-/**
- * Validation behavior configuration
- */
-export interface ValidationBehavior {
-    /** Auto-validate on file save */
-    validateOnSave: boolean;
-    /** Show validation decorations in editor */
-    showInlineDecorations: boolean;
-}
-
-/**
- * Workflow step definition
- */
-export interface WorkflowStep {
-    /** Step identifier */
-    id: string;
-    /** Operation to execute */
-    operation: 'smartFix' | 'formatLocal' | 'formatAI' | 'validate' | 'removeDuplicates' | 'findUnused';
-    /** Operation-specific options */
-    options?: Record<string, any>;
-    /** Continue on error */
-    continueOnError: boolean;
-    /** Custom label for progress display */
-    label?: string;
-}
-
-/**
- * Workflow definition
- */
-export interface WorkflowDefinition {
-    /** Workflow unique ID */
-    id: string;
-    /** Display name */
-    name: string;
-    /** Description */
-    description: string;
-    /** Steps to execute in order */
-    steps: WorkflowStep[];
-    /** Scope: single entry or all entries */
-    scope: 'entry' | 'file' | 'workspace';
-    /** Show in context menu */
-    showInMenu: boolean;
-    /** Keyboard shortcut (optional) */
-    keybinding?: string;
-}
-
-/**
- * Menu organization configuration
- */
-export interface MenuOrganizationConfig {
-    /** Group order in context menu */
-    groupOrder: string[];
-    /** Custom group labels */
-    groupLabels: Record<string, string>;
-    /** Show icons in menu */
-    showIcons: boolean;
-}
-
-/**
- * Customization configuration
- */
-export interface CustomizationConfig {
-    /** Feature visibility toggles */
-    featureVisibility: FeatureVisibilityConfig;
-    /** Feature-specific behaviors */
-    behaviors: {
-        keyReplacement: KeyReplacementBehavior;
-        smartFix: SmartFixBehavior;
-        duplicateRemoval: DuplicateRemovalBehavior;
-        validation: ValidationBehavior;
-    };
-    /** Custom workflow definitions */
-    workflows: WorkflowDefinition[];
-    /** Menu organization preferences */
-    menuOrganization: MenuOrganizationConfig;
-}
-
-/**
- * 配置项的键名常量
- * 使用常量避免硬编码字符串，减少拼写错误
- */
-export const CONFIG_KEYS = {
-    /** 配置节名称 */
-    SECTION: 'referenceManager',
-    /** AI 提供商 */
-    AI_PROVIDER: 'aiProvider',
-    /** API密钥 */
-    API_KEY: 'apiKey',
-    /** Groq API密钥 */
-    GROQ_API_KEY: 'groqApiKey',
-    /** 最大重试次数 */
-    MAX_RETRIES: 'maxRetries',
-    /** 超时时间 */
-    TIMEOUT: 'timeout',
-    /** 模型选择 */
-    MODEL: 'model',
-    /** Groq 模型 */
-    GROQ_MODEL: 'groqModel',
-    /** 本地格式化 - 作者规范化 */
-    LOCAL_FORMAT_NORMALIZE_AUTHORS: 'localFormat.normalizeAuthors',
-    /** 本地格式化 - 标题保护词 */
-    LOCAL_FORMAT_PROTECT_TITLE_WORDS: 'localFormat.protectTitleWords',
-    /** 本地格式化 - 期刊缩写映射 */
-    LOCAL_FORMAT_JOURNAL_ABBREVIATIONS: 'localFormat.journalAbbreviations',
-    /** 校验 - 启用 */
-    VALIDATION_ENABLED: 'validation.enabled',
-    /** 校验 - 严格度 */
-    VALIDATION_STRICTNESS: 'validation.strictness',
-    /** 官方元数据 - 启用 */
-    OFFICIAL_METADATA_ENABLED: 'officialMetadata.enabled',
-    /** 官方元数据 - 超时 */
-    OFFICIAL_METADATA_TIMEOUT: 'officialMetadata.timeout',
-    /** 官方元数据 - key 策略 */
-    OFFICIAL_METADATA_KEY_POLICY: 'officialMetadata.keyPolicy',
-    /** 官方元数据 - 格式模式 */
-    OFFICIAL_METADATA_FORMAT_MODE: 'officialMetadata.formatMode',
-    /** 定制化 - 功能可见性 */
-    CUSTOMIZATION_FEATURE_VISIBILITY: 'customization.featureVisibility',
-    /** 定制化 - 行为配置 */
-    CUSTOMIZATION_BEHAVIORS: 'customization.behaviors',
-    /** 定制化 - 工作流 */
-    CUSTOMIZATION_WORKFLOWS: 'customization.workflows',
-    /** 定制化 - 菜单组织 */
-    CUSTOMIZATION_MENU_ORGANIZATION: 'customization.menuOrganization',
-} as const;
-
-/**
- * 默认配置值
- * 当用户未设置时使用这些默认值
- */
-export const DEFAULT_CONFIG: ExtensionConfig = {
-    aiProvider: 'groq',
-    apiKey: '',
-    groqApiKey: '',
-    maxRetries: 3,
-    timeout: 30000,
-    model: 'claude-sonnet-4-20250514',
-    groqModel: 'llama-3.3-70b-versatile',
-    localFormat: {
-        normalizeAuthors: true,
-        protectTitleWords: ['LaTeX', 'BibTeX', 'arXiv', 'GitHub', 'OpenAI', 'GPU', 'CPU', 'AI', 'DOI', 'NOON', 'Hong-Ou-Mandel', 'Rydberg', 'CP', 'PT'],
-        journalAbbreviations: DEFAULT_JOURNAL_ABBREVIATIONS,
-    },
-    validation: {
-        enabled: true,
-        strictness: 'normal',
-    },
-    officialMetadata: {
-        enabled: true,
-        timeout: 8000,
-        keyPolicy: 'officialAlways',
-        formatMode: 'normalized',
-    },
-    customization: {
-        featureVisibility: {
-            smartFix: true,
-            validate: true,
-            history: true,
-            advancedMenu: true,
-            advanced: {
-                smartFixAll: true,
-                smartFixAllOfficialRaw: true,
-                officialReport: true,
-                removeDuplicates: true,
-                findUnusedCitations: true,
-                formatEntryLocal: true,
-                formatEntryAI: true,
-                smartFixOfficialRaw: true,
-                formatAllEntriesLocal: true,
-                formatAllEntriesAI: true,
-            },
-        },
-        behaviors: {
-            keyReplacement: {
-                mode: 'replace-and-comment-old',
-                commentPrefix: '% oldkey:',
-            },
-            smartFix: {
-                operationOrder: ['official', 'ai', 'local'],
-                enableFallback: true,
-                showDetailedSummary: true,
-                autoValidate: false,
-            },
-            duplicateRemoval: {
-                keepStrategy: 'most-complete',
-                maxEntries: 100,
-            },
-            validation: {
-                validateOnSave: false,
-                showInlineDecorations: true,
-            },
-        },
-        workflows: [
-            {
-                id: 'optimize-all',
-                name: 'Optimize All',
-                description: 'Format, deduplicate, and validate all entries',
-                steps: [
-                    { id: 'format', operation: 'formatLocal', continueOnError: false, label: 'Formatting entries...' },
-                    { id: 'dedup', operation: 'removeDuplicates', continueOnError: true, label: 'Removing duplicates...' },
-                    { id: 'validate', operation: 'validate', continueOnError: false, label: 'Validating entries...' },
-                ],
-                scope: 'file',
-                showInMenu: true,
-            },
-        ],
-        menuOrganization: {
-            groupOrder: ['primary', 'validation', 'history', 'workflows', 'advanced'],
-            groupLabels: {
-                primary: 'Quick Actions',
-                validation: 'Quality',
-                history: 'History',
-                workflows: 'Workflows',
-                advanced: 'Advanced',
-            },
-            showIcons: true,
-        },
-    },
+type ConfigInspect<T> = {
+    globalValue?: T;
+    workspaceValue?: T;
+    workspaceFolderValue?: T;
 };
 
-/**
- * 获取当前插件配置
- *
- * @returns ExtensionConfig 当前的配置对象
- *
- * @example
- * const config = getConfig();
- * if (!config.apiKey) {
- *     vscode.window.showWarningMessage('请先配置API Key');
- * }
- */
-export function getConfig(): ExtensionConfig {
-    // 获取referenceManager配置节
-    const config = vscode.workspace.getConfiguration(CONFIG_KEYS.SECTION);
+function hasUserOverride<T>(inspect: ConfigInspect<T> | undefined): boolean {
+    if (!inspect) {
+        return false;
+    }
 
-    // Get customization config with migration
-    const customizationConfig = config.get<CustomizationConfig>(
-        'customization',
-        DEFAULT_CONFIG.customization
+    return (
+        inspect.globalValue !== undefined ||
+        inspect.workspaceValue !== undefined ||
+        inspect.workspaceFolderValue !== undefined
     );
+}
+
+export const CONFIG_KEYS = {
+    SECTION: 'referenceManager',
+    AI_PROVIDER: 'aiProvider',
+    API_KEY: 'apiKey',
+    GROQ_API_KEY: 'groqApiKey',
+    MAX_RETRIES: 'maxRetries',
+    TIMEOUT: 'timeout',
+    MODEL: 'model',
+    GROQ_MODEL: 'groqModel',
+    LOCAL_FORMAT_NORMALIZE_AUTHORS: 'localFormat.normalizeAuthors',
+    LOCAL_FORMAT_PROTECT_TITLE_WORDS: 'localFormat.protectTitleWords',
+    LOCAL_FORMAT_JOURNAL_ABBREVIATIONS: 'localFormat.journalAbbreviations',
+    VALIDATION_ENABLED: 'validation.enabled',
+    VALIDATION_STRICTNESS: 'validation.strictness',
+    OFFICIAL_METADATA_ENABLED: 'officialMetadata.enabled',
+    OFFICIAL_METADATA_TIMEOUT: 'officialMetadata.timeout',
+    OFFICIAL_METADATA_FORMAT_MODE: 'officialMetadata.formatMode',
+    UI_PRESET: 'ui.preset',
+    UI_CONTEXT_MENU_PINS: 'ui.contextMenuPins',
+    UI_SHOW_COMMAND_CENTER_IN_CONTEXT_MENU: 'ui.showCommandCenterInContextMenu',
+    KEY_HANDLING_MODE: 'keyHandling.mode',
+    KEY_HANDLING_COMMENT_PREFIX: 'keyHandling.commentPrefix',
+    QUALITY_VALIDATE_ON_SAVE: 'quality.validateOnSave',
+    QUALITY_SHOW_INLINE_DECORATIONS: 'quality.showInlineDecorations',
+    CLEANUP_DUPLICATE_KEEP_STRATEGY: 'cleanup.duplicateKeepStrategy',
+    EXPERIMENTAL_WORKFLOWS: 'experimental.workflows',
+    LEGACY_CUSTOMIZATION: 'customization',
+    LEGACY_OFFICIAL_METADATA_KEY_POLICY: 'officialMetadata.keyPolicy',
+} as const;
+
+export { DEFAULT_CONFIG };
+
+function getNewValueOrFallback<T>(
+    config: vscode.WorkspaceConfiguration,
+    key: string,
+    fallback: T
+): T {
+    return config.get<T>(key, fallback);
+}
+
+function getUserOrMigratedValue<T>(
+    config: vscode.WorkspaceConfiguration,
+    key: string,
+    defaultValue: T,
+    migratedValue: T
+): T {
+    const inspect = config.inspect<T>(key);
+    if (hasUserOverride(inspect)) {
+        return config.get<T>(key, defaultValue);
+    }
+    return migratedValue;
+}
+
+export function getConfig(): ExtensionConfig {
+    const config = vscode.workspace.getConfiguration(CONFIG_KEYS.SECTION);
+    const legacyCustomization = config.get<Partial<CustomizationConfig>>(CONFIG_KEYS.LEGACY_CUSTOMIZATION);
+    const legacyPolicy = config.get<OfficialKeyPolicy | undefined>(CONFIG_KEYS.LEGACY_OFFICIAL_METADATA_KEY_POLICY);
+    const migrated = migrateLegacyConfig({
+        officialKeyPolicy: legacyPolicy,
+        customization: legacyCustomization,
+    });
+
+    const presetInspect = config.inspect<UIPreset>(CONFIG_KEYS.UI_PRESET);
+    const preset = getUserOrMigratedValue(
+        config,
+        CONFIG_KEYS.UI_PRESET,
+        DEFAULT_CONFIG.ui.preset,
+        migrated.ui.preset
+    );
+    const pins = hasUserOverride(config.inspect<ContextMenuPin[]>(CONFIG_KEYS.UI_CONTEXT_MENU_PINS))
+        ? sanitizeContextMenuPins(config.get<string[]>(CONFIG_KEYS.UI_CONTEXT_MENU_PINS, DEFAULT_CONFIG.ui.contextMenuPins))
+        : hasUserOverride(presetInspect)
+            ? undefined
+            : migrated.ui.contextMenuPins;
+    const showCommandCenter = hasUserOverride(
+        config.inspect<boolean>(CONFIG_KEYS.UI_SHOW_COMMAND_CENTER_IN_CONTEXT_MENU)
+    )
+        ? config.get<boolean>(
+            CONFIG_KEYS.UI_SHOW_COMMAND_CENTER_IN_CONTEXT_MENU,
+            DEFAULT_CONFIG.ui.showCommandCenterInContextMenu
+        )
+        : hasUserOverride(presetInspect)
+            ? undefined
+            : migrated.ui.showCommandCenterInContextMenu;
 
     return {
-        aiProvider: config.get<AIProvider>(CONFIG_KEYS.AI_PROVIDER, DEFAULT_CONFIG.aiProvider),
-        apiKey: config.get<string>(CONFIG_KEYS.API_KEY, DEFAULT_CONFIG.apiKey),
-        groqApiKey: config.get<string>(CONFIG_KEYS.GROQ_API_KEY, DEFAULT_CONFIG.groqApiKey),
-        maxRetries: config.get<number>(CONFIG_KEYS.MAX_RETRIES, DEFAULT_CONFIG.maxRetries),
-        timeout: config.get<number>(CONFIG_KEYS.TIMEOUT, DEFAULT_CONFIG.timeout),
-        model: config.get<string>(CONFIG_KEYS.MODEL, DEFAULT_CONFIG.model),
-        groqModel: config.get<string>(CONFIG_KEYS.GROQ_MODEL, DEFAULT_CONFIG.groqModel),
+        aiProvider: getNewValueOrFallback(config, CONFIG_KEYS.AI_PROVIDER, DEFAULT_CONFIG.aiProvider),
+        apiKey: getNewValueOrFallback(config, CONFIG_KEYS.API_KEY, DEFAULT_CONFIG.apiKey),
+        groqApiKey: getNewValueOrFallback(config, CONFIG_KEYS.GROQ_API_KEY, DEFAULT_CONFIG.groqApiKey),
+        maxRetries: getNewValueOrFallback(config, CONFIG_KEYS.MAX_RETRIES, DEFAULT_CONFIG.maxRetries),
+        timeout: getNewValueOrFallback(config, CONFIG_KEYS.TIMEOUT, DEFAULT_CONFIG.timeout),
+        model: getNewValueOrFallback(config, CONFIG_KEYS.MODEL, DEFAULT_CONFIG.model),
+        groqModel: getNewValueOrFallback(config, CONFIG_KEYS.GROQ_MODEL, DEFAULT_CONFIG.groqModel),
         localFormat: {
-            normalizeAuthors: config.get<boolean>(
+            normalizeAuthors: getNewValueOrFallback(
+                config,
                 CONFIG_KEYS.LOCAL_FORMAT_NORMALIZE_AUTHORS,
                 DEFAULT_CONFIG.localFormat.normalizeAuthors
             ),
-            protectTitleWords: config.get<string[]>(
+            protectTitleWords: getNewValueOrFallback(
+                config,
                 CONFIG_KEYS.LOCAL_FORMAT_PROTECT_TITLE_WORDS,
                 DEFAULT_CONFIG.localFormat.protectTitleWords
             ),
-            journalAbbreviations: config.get<Record<string, string>>(
+            journalAbbreviations: getNewValueOrFallback(
+                config,
                 CONFIG_KEYS.LOCAL_FORMAT_JOURNAL_ABBREVIATIONS,
                 DEFAULT_CONFIG.localFormat.journalAbbreviations
             ),
         },
         validation: {
-            enabled: config.get<boolean>(
+            enabled: getNewValueOrFallback(
+                config,
                 CONFIG_KEYS.VALIDATION_ENABLED,
                 DEFAULT_CONFIG.validation.enabled
             ),
-            strictness: config.get<ValidationStrictness>(
+            strictness: getNewValueOrFallback<ValidationStrictness>(
+                config,
                 CONFIG_KEYS.VALIDATION_STRICTNESS,
                 DEFAULT_CONFIG.validation.strictness
             ),
         },
         officialMetadata: {
-            enabled: config.get<boolean>(
+            enabled: getNewValueOrFallback(
+                config,
                 CONFIG_KEYS.OFFICIAL_METADATA_ENABLED,
                 DEFAULT_CONFIG.officialMetadata.enabled
             ),
-            timeout: config.get<number>(
+            timeout: getNewValueOrFallback(
+                config,
                 CONFIG_KEYS.OFFICIAL_METADATA_TIMEOUT,
                 DEFAULT_CONFIG.officialMetadata.timeout
             ),
-            keyPolicy: config.get<OfficialKeyPolicy>(
-                CONFIG_KEYS.OFFICIAL_METADATA_KEY_POLICY,
-                DEFAULT_CONFIG.officialMetadata.keyPolicy
-            ),
-            formatMode: config.get<OfficialFormatMode>(
+            formatMode: getNewValueOrFallback(
+                config,
                 CONFIG_KEYS.OFFICIAL_METADATA_FORMAT_MODE,
                 DEFAULT_CONFIG.officialMetadata.formatMode
             ),
         },
-        customization: migrateCustomizationConfig(customizationConfig),
+        ui: resolveUiConfig({
+            preset,
+            contextMenuPins: pins,
+            showCommandCenterInContextMenu: showCommandCenter,
+        }),
+        keyHandling: {
+            mode: getUserOrMigratedValue(
+                config,
+                CONFIG_KEYS.KEY_HANDLING_MODE,
+                DEFAULT_CONFIG.keyHandling.mode,
+                migrated.keyHandling.mode
+            ),
+            commentPrefix: getUserOrMigratedValue(
+                config,
+                CONFIG_KEYS.KEY_HANDLING_COMMENT_PREFIX,
+                DEFAULT_CONFIG.keyHandling.commentPrefix,
+                migrated.keyHandling.commentPrefix
+            ),
+        },
+        quality: {
+            validateOnSave: getUserOrMigratedValue(
+                config,
+                CONFIG_KEYS.QUALITY_VALIDATE_ON_SAVE,
+                DEFAULT_CONFIG.quality.validateOnSave,
+                migrated.quality.validateOnSave
+            ),
+            showInlineDecorations: getUserOrMigratedValue(
+                config,
+                CONFIG_KEYS.QUALITY_SHOW_INLINE_DECORATIONS,
+                DEFAULT_CONFIG.quality.showInlineDecorations,
+                migrated.quality.showInlineDecorations
+            ),
+        },
+        cleanup: {
+            duplicateKeepStrategy: getUserOrMigratedValue(
+                config,
+                CONFIG_KEYS.CLEANUP_DUPLICATE_KEEP_STRATEGY,
+                DEFAULT_CONFIG.cleanup.duplicateKeepStrategy,
+                migrated.cleanup.duplicateKeepStrategy
+            ),
+        },
+        experimental: {
+            workflows: getUserOrMigratedValue<WorkflowDefinition[]>(
+                config,
+                CONFIG_KEYS.EXPERIMENTAL_WORKFLOWS,
+                DEFAULT_CONFIG.experimental.workflows,
+                migrated.experimental.workflows
+            ),
+        },
     };
 }
 
-/**
- * 验证API Key格式是否有效
- *
- * @param apiKey 要验证的API Key
- * @param provider AI 提供商
- * @returns boolean 格式是否有效
- */
 export function validateApiKey(apiKey: string, _provider?: AIProvider): boolean {
-    // 检查是否为空
     if (!apiKey || apiKey.trim() === '') {
         return false;
     }
 
-    // 基本长度检查
-    if (apiKey.length < 20) {
-        return false;
-    }
-
-    return true;
+    return apiKey.length >= 20;
 }
 
-/**
- * 检查配置是否完整，如果不完整则提示用户
- *
- * @returns boolean 配置是否完整
- */
 export async function ensureConfigured(): Promise<boolean> {
     const config = getConfig();
 
-    // 根据选择的提供商检查对应的 API Key
     if (config.aiProvider === 'groq') {
         if (!validateApiKey(config.groqApiKey, 'groq')) {
             const action = await vscode.window.showWarningMessage(
@@ -488,153 +284,104 @@ export async function ensureConfigured(): Promise<boolean> {
 
             return false;
         }
-    } else {
-        if (!validateApiKey(config.apiKey, 'anthropic')) {
-            const action = await vscode.window.showWarningMessage(
-                'Reference Manager Pro: 请先配置 Anthropic API Key',
-                '打开设置'
+    } else if (!validateApiKey(config.apiKey, 'anthropic')) {
+        const action = await vscode.window.showWarningMessage(
+            'Reference Manager Pro: 请先配置 Anthropic API Key',
+            '打开设置'
+        );
+
+        if (action === '打开设置') {
+            await vscode.commands.executeCommand(
+                'workbench.action.openSettings',
+                'referenceManager.apiKey'
             );
-
-            if (action === '打开设置') {
-                await vscode.commands.executeCommand(
-                    'workbench.action.openSettings',
-                    'referenceManager.apiKey'
-                );
-            }
-
-            return false;
         }
+
+        return false;
     }
 
     return true;
 }
 
-/**
- * 监听配置变化
- *
- * @param callback 配置变化时的回调函数
- * @returns Disposable 用于取消监听
- *
- * @example
- * // 在extension.ts中监听配置变化
- * const disposable = onConfigChange((config) => {
- *     console.log('配置已更新:', config);
- *     // 重新初始化AI客户端等
- * });
- * context.subscriptions.push(disposable);
- */
 export function onConfigChange(
     callback: (config: ExtensionConfig) => void
 ): vscode.Disposable {
     return vscode.workspace.onDidChangeConfiguration((event) => {
-        // 检查是否是我们关心的配置变化
         if (event.affectsConfiguration(CONFIG_KEYS.SECTION)) {
             callback(getConfig());
         }
     });
 }
 
-/**
- * Migrate customization config to ensure all required fields exist
- * Provides backward compatibility for users upgrading from older versions
- *
- * @param config Customization config from settings (may be incomplete)
- * @returns Complete CustomizationConfig with all required fields
- */
-export function migrateCustomizationConfig(config: Partial<CustomizationConfig> | undefined): CustomizationConfig {
-    if (!config) {
-        return DEFAULT_CONFIG.customization;
-    }
-
-    // Deep merge with defaults
-    return {
-        featureVisibility: {
-            ...DEFAULT_CONFIG.customization.featureVisibility,
-            ...config.featureVisibility,
-            advanced: {
-                ...DEFAULT_CONFIG.customization.featureVisibility.advanced,
-                ...config.featureVisibility?.advanced,
-            },
-        },
-        behaviors: {
-            keyReplacement: {
-                ...DEFAULT_CONFIG.customization.behaviors.keyReplacement,
-                ...config.behaviors?.keyReplacement,
-            },
-            smartFix: {
-                ...DEFAULT_CONFIG.customization.behaviors.smartFix,
-                ...config.behaviors?.smartFix,
-            },
-            duplicateRemoval: {
-                ...DEFAULT_CONFIG.customization.behaviors.duplicateRemoval,
-                ...config.behaviors?.duplicateRemoval,
-            },
-            validation: {
-                ...DEFAULT_CONFIG.customization.behaviors.validation,
-                ...config.behaviors?.validation,
-            },
-        },
-        workflows: config.workflows || DEFAULT_CONFIG.customization.workflows,
-        menuOrganization: {
-            ...DEFAULT_CONFIG.customization.menuOrganization,
-            ...config.menuOrganization,
-            groupLabels: {
-                ...DEFAULT_CONFIG.customization.menuOrganization.groupLabels,
-                ...config.menuOrganization?.groupLabels,
-            },
-        },
-    };
-}
-
-/**
- * Check if user needs to migrate from old config format
- *
- * @returns boolean True if migration is needed
- */
 export function needsConfigMigration(): boolean {
     const config = vscode.workspace.getConfiguration(CONFIG_KEYS.SECTION);
-    const customization = config.get<CustomizationConfig>('customization');
-    return !customization;
+    const hasLegacyCustomization = hasUserOverride(
+        config.inspect<CustomizationConfig>(CONFIG_KEYS.LEGACY_CUSTOMIZATION)
+    );
+    const hasNewUi = hasUserOverride(config.inspect<UIPreset>(CONFIG_KEYS.UI_PRESET));
+    return hasLegacyCustomization && !hasNewUi;
 }
 
-/**
- * Prompt user to migrate configuration
- *
- * @returns Promise<boolean> True if user chose to migrate
- */
 export async function promptConfigMigration(): Promise<boolean> {
     const choice = await vscode.window.showInformationMessage(
-        'Reference Manager Pro has new customization features. Would you like to enable them with default settings?',
-        'Enable Now',
-        'Later',
-        'Learn More'
+        'Reference Manager Pro 已升级为更简洁的交互模型。是否将旧设置迁移到新配置？',
+        '立即迁移',
+        '稍后',
+        '了解变化'
     );
 
-    if (choice === 'Learn More') {
+    if (choice === '了解变化') {
         vscode.window.showInformationMessage(
-            'New features: Customize menu visibility, configure key replacement modes, create custom workflows, and more!'
+            '新版本默认直接提供 5 个高频动作，并将其余低频能力收敛到 More Tools。'
         );
         return false;
     }
 
-    return choice === 'Enable Now';
+    return choice === '立即迁移';
 }
 
-/**
- * Perform automatic configuration migration
- */
 export async function migrateUserConfig(): Promise<void> {
     const config = vscode.workspace.getConfiguration(CONFIG_KEYS.SECTION);
+    const migrated = migrateLegacyConfig({
+        officialKeyPolicy: config.get<OfficialKeyPolicy | undefined>(CONFIG_KEYS.LEGACY_OFFICIAL_METADATA_KEY_POLICY),
+        customization: config.get<Partial<CustomizationConfig>>(CONFIG_KEYS.LEGACY_CUSTOMIZATION),
+    });
 
-    // Write default customization config
+    await config.update(CONFIG_KEYS.UI_PRESET, migrated.ui.preset, vscode.ConfigurationTarget.Global);
+    await config.update(CONFIG_KEYS.UI_CONTEXT_MENU_PINS, migrated.ui.contextMenuPins, vscode.ConfigurationTarget.Global);
     await config.update(
-        'customization',
-        DEFAULT_CONFIG.customization,
+        CONFIG_KEYS.UI_SHOW_COMMAND_CENTER_IN_CONTEXT_MENU,
+        migrated.ui.showCommandCenterInContextMenu,
+        vscode.ConfigurationTarget.Global
+    );
+    await config.update(CONFIG_KEYS.KEY_HANDLING_MODE, migrated.keyHandling.mode, vscode.ConfigurationTarget.Global);
+    await config.update(
+        CONFIG_KEYS.KEY_HANDLING_COMMENT_PREFIX,
+        migrated.keyHandling.commentPrefix,
+        vscode.ConfigurationTarget.Global
+    );
+    await config.update(
+        CONFIG_KEYS.QUALITY_VALIDATE_ON_SAVE,
+        migrated.quality.validateOnSave,
+        vscode.ConfigurationTarget.Global
+    );
+    await config.update(
+        CONFIG_KEYS.QUALITY_SHOW_INLINE_DECORATIONS,
+        migrated.quality.showInlineDecorations,
+        vscode.ConfigurationTarget.Global
+    );
+    await config.update(
+        CONFIG_KEYS.CLEANUP_DUPLICATE_KEEP_STRATEGY,
+        migrated.cleanup.duplicateKeepStrategy,
+        vscode.ConfigurationTarget.Global
+    );
+    await config.update(
+        CONFIG_KEYS.EXPERIMENTAL_WORKFLOWS,
+        migrated.experimental.workflows,
         vscode.ConfigurationTarget.Global
     );
 
     vscode.window.showInformationMessage(
-        '✅ Customization features enabled! Check settings to configure.'
+        '✅ 已完成新交互模型迁移。你可以在 Reference Manager 的新设置项中继续微调。'
     );
 }
-

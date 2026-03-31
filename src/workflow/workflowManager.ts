@@ -158,7 +158,7 @@ export class WorkflowManager {
             // Open settings
             await vscode.commands.executeCommand(
                 'workbench.action.openSettings',
-                'referenceManager.customization.workflows'
+                'referenceManager.experimental.workflows'
             );
         }
     }
